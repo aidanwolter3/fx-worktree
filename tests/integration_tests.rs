@@ -168,7 +168,7 @@ fn test_full_lifecycle() {
     list_worktrees(config, false).unwrap();
 
     // 2. Test Worktree Create
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
     assert_eq!(worktree_info.agent_id, "test_agent");
     assert_eq!(worktree_info.config, "mock_config");
 
@@ -236,7 +236,7 @@ fn test_gc() {
 
     // Create outdir and worktree
     create_outdir(config, "mock_config").unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
 
     let lease_file = config.leases_dir().join(format!(
         "mock_config_{}.lease",
@@ -292,7 +292,7 @@ fn test_free_worktree_overwrite() {
 
     // 1. Create outdir and allocate worktree (moves outdir to workspace)
     let outdir_id = create_outdir(config, "mock_config").unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
 
     let pool_outdir = config.outdirs_dir().join("mock_config").join(&outdir_id);
     let workspace_outdir = worktree_info.workspace_path.join("out/default");
@@ -339,7 +339,7 @@ fn test_locate_path() {
     assert_eq!(path, pool_outdir);
 
     // 3. Allocate worktree
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
 
     // Locate outdir by ID (should resolve to workspace path since it is leased and moved)
     let path = locate_path(config, Some(outdir_id.clone())).unwrap();
@@ -362,7 +362,7 @@ fn test_git_symlink_conversion() {
 
     // 1. Create outdir and allocate worktree
     create_outdir(config, "mock_config").unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
 
     // 2. Verify that .git in workspace is a symlink
     let git_file_path = worktree_info.workspace_path.join(".git");

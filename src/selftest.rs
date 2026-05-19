@@ -134,7 +134,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         // 4. Allocate worktree
         println!("Allocating test worktree (this will run fx gen)...");
         let pref_id = preferred_outdir_id.as_deref().and_then(|id| id.strip_prefix("out_").or(Some(id)));
-        let worktree_info = allocate(&test_config, config_name, "self_test_agent", pref_id, forced_outdir_path.clone())
+        let worktree_info = allocate(&test_config, config_name, "self_test_agent", pref_id, forced_outdir_path.clone(), false)
             .context("Failed to allocate worktree")?;
         println!("Allocated workspace: {:?}", worktree_info.workspace_path);
         allocated_worktree_id = worktree_info.worktree_id.clone();

@@ -48,7 +48,7 @@ fn main() -> Result<()> {
                         let uuid = uuid::Uuid::new_v4().to_string();
                         format!("agent-{}", &uuid[0..8])
                     });
-                    let worktree_info = alloc::allocate(&config, &cfg, &agent_id, None, None)?;
+                    let worktree_info = alloc::allocate(&config, &cfg, &agent_id, None, None, cli.json)?;
                     if cli.json {
                         let json = serde_json::to_string(&worktree_info)?;
                         println!("{}", json);
@@ -60,7 +60,8 @@ fn main() -> Result<()> {
                         println!("  ℹ Workspace   : {}", worktree_info.workspace_path.to_string_lossy());
                         println!("  ℹ Outdir      : {}", worktree_info.outdir_path.to_string_lossy());
                         println!("\nTo change directory into the workspace:");
-                        println!("  $ fxenv cd {}", worktree_info.worktree_id);
+                        println!("  $ fxenv cd {}  # Navigate to this specific workspace", worktree_info.worktree_id);
+                        println!("  $ fxenv cd                     # Navigate to the last created environment");
                     }
                 }
                 WorktreeAction::Delete { id } => {
@@ -124,6 +125,10 @@ fn main() -> Result<()> {
                     "'::id -- Outdir or Worktree ID (optional, resolves last created if omitted):_fxenv_all_ids'",
                     1,
                 );
+                script = script.replace(
+                    "':config -- Configuration name (e.g. fuchsia.x64):_default'",
+                    "':config -- Configuration name (e.g. fuchsia.x64):_fxenv_configs'",
+                );
 
                 // Move entry point block to the very end of the file
                 let entry_point = r#"if [ "$funcstack[1]" = "_fxenv" ]; then
@@ -137,21 +142,27 @@ fi"#;
                     script.push_str("\n\n# Custom dynamic completion helpers\n");
                     script.push_str(r#"_fxenv_outdir_ids() {
     local -a ids
-    ids=($(fxenv outdir list 2>/dev/null | grep -E '^\s+-' | awk '{print $2}'))
+    ids=($(fxenv outdir list 2>/dev/null | tail -n +2 | awk '{print $2}'))
     _describe -t ids 'outdir ID' ids
 }
 
 _fxenv_worktree_ids() {
     local -a ids
-    ids=($(fxenv worktree list 2>/dev/null | grep -E 'Worktree ID:' | awk '{print $3}'))
+    ids=($(fxenv worktree list 2>/dev/null | grep -E '^■ ' | awk '{print $2}'))
     _describe -t ids 'worktree ID' ids
 }
 
 _fxenv_all_ids() {
     local -a ids
-    ids+=($(fxenv outdir list 2>/dev/null | grep -E '^\s+-' | awk '{print $2}'))
-    ids+=($(fxenv worktree list 2>/dev/null | grep -E 'Worktree ID:' | awk '{print $3}'))
+    ids+=($(fxenv outdir list 2>/dev/null | tail -n +2 | awk '{print $2}'))
+    ids+=($(fxenv worktree list 2>/dev/null | grep -E '^■ ' | awk '{print $2}'))
     _describe -t ids 'outdir/worktree ID' ids
+}
+
+_fxenv_configs() {
+    local -a configs
+    configs=($(fxenv outdir list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -u))
+    _describe -t configs 'configuration' configs
 }
 "#);
                     script.push_str("\n");

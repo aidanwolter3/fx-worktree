@@ -24,6 +24,7 @@ pub fn allocate(
     agent_id: &str,
     preferred_outdir_id: Option<&str>,
     forced_outdir_path: Option<PathBuf>,
+    quiet: bool,
 ) -> Result<WorktreeInfo> {
     let mut acquired_lease = None;
     let mut outdir_path = PathBuf::new();
@@ -50,6 +51,9 @@ pub fn allocate(
         out_id = uuid;
     } else {
         // 1. Acquire Atomic Lock from Pool
+        if !quiet {
+            println!("Leasing outdir from pool...");
+        }
         let outdir_config_dir = config.outdirs_dir().join(config_name);
         if !outdir_config_dir.exists() {
             return Err(anyhow!(
@@ -161,7 +165,7 @@ pub fn allocate(
     };
 
     // Run the rest of provisioning, rollback on failure
-    if let Err(e) = provision_workspace(config, &worktree_info) {
+    if let Err(e) = provision_workspace(config, &worktree_info, quiet) {
         rollback();
         return Err(e);
     }
@@ -170,12 +174,15 @@ pub fn allocate(
     Ok(worktree_info)
 }
 
-fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<()> {
+fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo, quiet: bool) -> Result<()> {
     let workspace_path = &worktree_info.workspace_path;
     fs::create_dir_all(workspace_path)
         .with_context(|| format!("Failed to create workspace dir {:?}", workspace_path))?;
 
     // 3. Parse Jiri State
+    if !quiet {
+        println!("Querying Fuchsia project structure...");
+    }
     let temp_jiri_json = std::env::temp_dir().join(format!("jiri_{}.json", Uuid::new_v4()));
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
     let jiri_cmd = if jiri_bin.exists() {
@@ -216,6 +223,9 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
     }
 
     // 4. Provision Root Git Worktree
+    if !quiet {
+        println!("Provisioning Git worktrees for {} sub-projects...", sub_projects.len() + 1);
+    }
     if let Some(root) = root_project {
         log::info!("Provisioning root git worktree at {:?}", workspace_path);
         run_command(
@@ -299,6 +309,9 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
     }
 
     // 5. Isolate Toolchains (Optimized: Symlink prebuilts & copy generated files, skip run-hooks)
+    if !quiet {
+        println!("Isolating toolchains and copying generated files...");
+    }
     log::info!("Isolating toolchains and copying generated files...");
 
     // Symlink .jiri_root
@@ -367,6 +380,9 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
     }
 
     // 6. Wire Build Directory (Moved for RBE support)
+    if !quiet {
+        println!("Moving build directory to workspace...");
+    }
     log::info!("Moving outdir to workspace...");
     let workspace_out = workspace_path.join("out");
     fs::create_dir_all(&workspace_out)
@@ -386,6 +402,9 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
         .with_context(|| format!("Failed to write {:?}", fx_build_dir_file))?;
 
     // 7. Run fx gen to update build files to point to workspace sources
+    if !quiet {
+        println!("Initializing workspace build files (running fx gen)...");
+    }
     log::info!("Running fx gen to initialize workspace build files...");
     let fx_bin = workspace_path.join("scripts/fx");
     let fx_cmd = if fx_bin.exists() {
