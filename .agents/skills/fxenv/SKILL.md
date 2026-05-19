@@ -103,6 +103,17 @@ Runs a full programmatic verification of the `fxenv` lifecycle (warming, allocat
     ```
     Runs the self-test reusing an existing build directory (either by ID inside the pool, or an absolute path to a standard build directory like `~/fuchsia/out/fuchsia_internal.arm64-balanced`). This skips the slow warming build phase and restores both the build cache (`.o` files) and `build.ninja` configuration at the end.
 
+### 4. Shell Completions
+
+*   **Generate Completions**:
+    ```bash
+    fxenv completions <bash|elvish|fish|powershell|zsh>
+    ```
+    Prints the shell completion script to stdout. E.g. for Zsh:
+    ```bash
+    fxenv completions zsh > ~/.zsh/completion/_fxenv
+    ```
+
 ## Technical Design & Constraints
 
 ### 1. RBE (Remote Build Execution) Support

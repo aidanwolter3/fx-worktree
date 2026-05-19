@@ -36,6 +36,12 @@ pub enum Commands {
         #[arg(long)]
         use_outdir: Option<String>,
     },
+    /// Generate shell completion scripts to stdout
+    Completions {
+        /// The shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Subcommand, Debug)]
