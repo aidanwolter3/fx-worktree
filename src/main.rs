@@ -17,9 +17,8 @@ fn main() -> Result<()> {
         Commands::Outdir { action } => match action {
             OutdirAction::Create {
                 config: cfg,
-                fx_args,
             } => {
-                let outdir_id = outdir::create_outdir(&config, &cfg, &fx_args)?;
+                let outdir_id = outdir::create_outdir(&config, &cfg)?;
                 log::info!("Outdir {} created successfully.", outdir_id);
             }
             OutdirAction::List => {

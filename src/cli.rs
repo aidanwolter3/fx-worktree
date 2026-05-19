@@ -44,9 +44,6 @@ pub enum OutdirAction {
     Create {
         #[arg(long)]
         config: String,
-        /// Extra arguments to pass to `fx set` (e.g. --release)
-        #[arg(long, num_args = 1.., allow_hyphen_values = true)]
-        fx_args: Vec<String>,
     },
     /// List all outdirs and their status
     List,

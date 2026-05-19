@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use std::fs;
 use uuid::Uuid;
 
-pub fn create_outdir(config: &Config, config_name: &str, fx_args: &[String]) -> Result<String> {
+pub fn create_outdir(config: &Config, config_name: &str) -> Result<String> {
     let uuid = Uuid::new_v4().to_string();
     let outdir_config_dir = config.outdirs_dir().join(config_name);
     let outdir_name = format!("out_{}", uuid);
@@ -23,10 +23,7 @@ pub fn create_outdir(config: &Config, config_name: &str, fx_args: &[String]) -> 
         "fx"
     };
 
-    let mut args = vec!["--dir", outdir_path.to_str().unwrap(), "set", config_name];
-    for arg in fx_args {
-        args.push(arg);
-    }
+    let args = vec!["--dir", outdir_path.to_str().unwrap(), "set", config_name];
 
     log::info!("Running fx set...");
     run_command(fx_cmd, &args, &config.fuchsia_dir, &[]).context("Failed to run fx set")?;

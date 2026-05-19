@@ -152,7 +152,7 @@ fn test_full_lifecycle() {
     let config = &env.config;
 
     // 1. Test Outdir Create
-    let outdir_id = create_outdir(config, "mock_config", &["--some-arg".to_string()]).unwrap();
+    let outdir_id = create_outdir(config, "mock_config").unwrap();
 
     let outdirs_dir = config.outdirs_dir().join("mock_config");
     assert!(outdirs_dir.exists());
@@ -235,7 +235,7 @@ fn test_gc() {
     let config = &env.config;
 
     // Create outdir and worktree
-    create_outdir(config, "mock_config", &[]).unwrap();
+    create_outdir(config, "mock_config").unwrap();
     let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
 
     let lease_file = config.leases_dir().join(format!(

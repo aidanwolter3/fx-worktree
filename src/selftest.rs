@@ -72,7 +72,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         }
     } else {
         log::info!("Creating test outdir...");
-        let id = create_outdir(&test_config, config_name, &[])
+        let id = create_outdir(&test_config, config_name)
             .context("Failed to create test outdir")?;
         outdir_id = id.clone();
         preferred_outdir_id = Some(id);
