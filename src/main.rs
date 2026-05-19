@@ -36,6 +36,10 @@ fn main() -> Result<()> {
                     config: cfg,
                     agent_id,
                 } => {
+                    let agent_id = agent_id.unwrap_or_else(|| {
+                        let uuid = uuid::Uuid::new_v4().to_string();
+                        format!("agent-{}", &uuid[0..8])
+                    });
                     let worktree_info = alloc::allocate(&config, &cfg, &agent_id, None, None)?;
                     let json = serde_json::to_string(&worktree_info)?;
                     println!("{}", json);

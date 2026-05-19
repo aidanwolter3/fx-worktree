@@ -29,11 +29,11 @@ Manages the shared pool of build directories. These directories reside physicall
 
 *   **Create an Outdir**:
     ```bash
-    fxenv outdir create --config <config_name>
+    fxenv outdir create <config_name>
     ```
     Creates a new build configuration inside the pool (runs `fx set`). E.g.:
     ```bash
-    fxenv outdir create --config fuchsia.x64
+    fxenv outdir create fuchsia.x64
     ```
 
 *   **List Outdirs**:
@@ -54,7 +54,7 @@ Allocates and frees isolated development environments.
 
 *   **Allocate a Workspace**:
     ```bash
-    fxenv worktree create --config <config_name> --agent-id <agent_name>
+    fxenv worktree create <config_name> [--agent-id <agent_name>]
     ```
     Leases a free outdir from the pool and creates an isolated git worktree mapped to it. 
     Returns a JSON string containing the workspace details:

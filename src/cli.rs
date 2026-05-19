@@ -54,7 +54,7 @@ pub enum Commands {
 pub enum OutdirAction {
     /// Create a new warm outdir for a config
     Create {
-        #[arg(long)]
+        /// Configuration name (e.g. fuchsia.x64)
         config: String,
     },
     /// List all outdirs and their status
@@ -71,10 +71,11 @@ pub enum OutdirAction {
 pub enum WorktreeAction {
     /// Create (allocate) an isolated worktree
     Create {
-        #[arg(long)]
+        /// Configuration name (e.g. fuchsia.x64)
         config: String,
+        /// Optional agent ID (will be randomly generated if omitted)
         #[arg(long)]
-        agent_id: String,
+        agent_id: Option<String>,
     },
     /// Delete (free) a worktree
     Delete {
