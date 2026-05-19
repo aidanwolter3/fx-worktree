@@ -370,6 +370,11 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
         .with_context(|| format!("Failed to create workspace out dir {:?}", workspace_out))?;
 
     let workspace_out_default = workspace_out.join("default");
+    if workspace_out_default.exists() {
+        log::warn!("Destination workspace outdir {:?} already exists. Deleting it before moving.", workspace_out_default);
+        fs::remove_dir_all(&workspace_out_default)
+            .with_context(|| format!("Failed to delete existing workspace outdir {:?}", workspace_out_default))?;
+    }
     fs::rename(&worktree_info.outdir_path, &workspace_out_default)
         .with_context(|| format!("Failed to move outdir from {:?} to {:?}", worktree_info.outdir_path, workspace_out_default))?;
 

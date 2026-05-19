@@ -283,3 +283,35 @@ fn test_self_test_command() {
     // Run self-test. It should use the mock fx and jiri we committed.
     run_self_test(config, None).unwrap();
 }
+
+#[test]
+fn test_free_worktree_overwrite() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create outdir and allocate worktree (moves outdir to workspace)
+    let outdir_id = create_outdir(config, "mock_config").unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+
+    let pool_outdir = config.outdirs_dir().join("mock_config").join(&outdir_id);
+    let workspace_outdir = worktree_info.workspace_path.join("out/default");
+
+    assert!(!pool_outdir.exists());
+    assert!(workspace_outdir.exists());
+
+    // 2. Simulate recreation of outdir in the pool (e.g. by accidental fx gen in base repo)
+    fs::create_dir_all(&pool_outdir).unwrap();
+    fs::write(pool_outdir.join("build.ninja"), "dummy build.ninja").unwrap();
+
+    // 3. Free the worktree (should overwrite the recreated pool outdir)
+    free_worktree_by_id(config, &worktree_info.worktree_id).unwrap();
+
+    // 4. Verify it succeeded and the pool outdir contains the restored workspace contents (not the dummy one)
+    assert!(pool_outdir.exists());
+    assert!(!workspace_outdir.exists());
+
+    // The recreated build.ninja should be gone, and the original args.gn should be restored
+    assert!(!pool_outdir.join("build.ninja").exists());
+    assert!(pool_outdir.join("args.gn").exists());
+}

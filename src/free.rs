@@ -42,6 +42,11 @@ pub fn free_worktree_internal(config: &Config, worktree_info: &WorktreeInfo) -> 
     let workspace_outdir = worktree_info.workspace_path.join("out/default");
     if workspace_outdir.exists() {
         log::info!("Moving outdir back to pool: {:?}", worktree_info.outdir_path);
+        if worktree_info.outdir_path.exists() {
+            log::warn!("Destination pool outdir {:?} already exists (likely recreated). Deleting it to overwrite with workspace outdir.", worktree_info.outdir_path);
+            fs::remove_dir_all(&worktree_info.outdir_path)
+                .with_context(|| format!("Failed to delete existing pool outdir {:?}", worktree_info.outdir_path))?;
+        }
         if let Some(parent) = worktree_info.outdir_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory {:?}", parent))?;
