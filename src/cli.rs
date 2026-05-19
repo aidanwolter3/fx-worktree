@@ -2,17 +2,22 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "fxenv", version, about = "Fuchsia Agent Environment Manager")]
+#[command(name = "fxenv", version, about = "Fuchsia Agent Environment Manager", disable_help_flag = true)]
 pub struct Cli {
     /// Path to the main Fuchsia checkout (defaults to $FUCHSIA_DIR)
     #[arg(long, global = true, env = "FUCHSIA_DIR")]
     pub fuchsia_dir: Option<PathBuf>,
+
+    /// Print help
+    #[arg(long, global = true, action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
 
     #[command(subcommand)]
     pub command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
+#[command(disable_help_flag = true)]
 pub enum Commands {
     /// Manage warm outdirs
     Outdir {
@@ -45,6 +50,7 @@ pub enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(disable_help_flag = true)]
 pub enum OutdirAction {
     /// Create a new warm outdir for a config
     Create {
@@ -61,6 +67,7 @@ pub enum OutdirAction {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(disable_help_flag = true)]
 pub enum WorktreeAction {
     /// Create (allocate) an isolated worktree
     Create {
