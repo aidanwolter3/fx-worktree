@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "fenv", version, about = "Fuchsia Agent Environment Manager")]
+#[command(name = "fxenv", version, about = "Fuchsia Agent Environment Manager")]
 pub struct Cli {
     /// Path to the main Fuchsia checkout (defaults to $FUCHSIA_DIR)
     #[arg(long, global = true, env = "FUCHSIA_DIR")]
@@ -24,9 +24,9 @@ pub enum Commands {
         #[command(subcommand)]
         action: WorktreeAction,
     },
-    /// Run a self-test to verify fenv functionality against a Fuchsia checkout.
+    /// Run a self-test to verify fxenv functionality against a Fuchsia checkout.
     ///
-    /// This will temporarily create a build directory under out/fenv and a git worktree,
+    /// This will temporarily create a build directory under out/fxenv and a git worktree,
     /// which will be cleaned up upon completion.
     SelfTest {
         /// Use an existing outdir ID instead of creating a new one.

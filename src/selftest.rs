@@ -12,15 +12,15 @@ use crate::utils::run_command;
 pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<()> {
     log::info!("Starting self-test...");
 
-    // 1. Create temporary FENV_ROOT
-    log::info!("Creating temporary FENV_ROOT...");
-    fs::create_dir_all(&config.fenv_root).context("Failed to create fenv_root directory")?;
-    let temp_fenv_root = tempfile::Builder::new()
+    // 1. Create temporary FXENV_ROOT
+    log::info!("Creating temporary FXENV_ROOT...");
+    fs::create_dir_all(&config.fxenv_root).context("Failed to create fxenv_root directory")?;
+    let temp_fxenv_root = tempfile::Builder::new()
         .prefix("self-test-")
-        .tempdir_in(&config.fenv_root)
-        .context("Failed to create temporary FENV_ROOT directory")?;
+        .tempdir_in(&config.fxenv_root)
+        .context("Failed to create temporary FXENV_ROOT directory")?;
     let test_config = Config {
-        fenv_root: temp_fenv_root.path().to_path_buf(),
+        fxenv_root: temp_fxenv_root.path().to_path_buf(),
         fuchsia_dir: config.fuchsia_dir.clone(),
     };
     test_config.init_topology()?;

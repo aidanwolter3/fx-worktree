@@ -5,13 +5,13 @@ use std::process::Command;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-use fenv::alloc::allocate;
-use fenv::config::Config;
-use fenv::free::free_worktree_by_id;
-use fenv::gc::garbage_collect;
-use fenv::list::{list_outdirs, list_worktrees};
-use fenv::outdir::{create_outdir, delete_outdir};
-use fenv::selftest::run_self_test;
+use fxenv::alloc::allocate;
+use fxenv::config::Config;
+use fxenv::free::free_worktree_by_id;
+use fxenv::gc::garbage_collect;
+use fxenv::list::{list_outdirs, list_worktrees};
+use fxenv::outdir::{create_outdir, delete_outdir};
+use fxenv::selftest::run_self_test;
 
 // Global lock to serialize tests that modify env vars
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -124,9 +124,9 @@ fi
         fuchsia_path,
     );
 
-    // Set env var for FENV_ROOT so Config::new picks it up
+    // Set env var for FXENV_ROOT so Config::new picks it up
     unsafe {
-        std::env::set_var("FENV_ROOT", fenv_root_dir.path());
+        std::env::set_var("FXENV_ROOT", fenv_root_dir.path());
     }
 
     let config = Config::new(Some(fuchsia_path.to_path_buf())).unwrap();

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use fenv::cli::{Cli, Commands, OutdirAction, WorktreeAction};
-use fenv::config::Config;
-use fenv::{alloc, free, gc, list, outdir, selftest};
+use fxenv::cli::{Cli, Commands, OutdirAction, WorktreeAction};
+use fxenv::config::Config;
+use fxenv::{alloc, free, gc, list, outdir, selftest};
 
 fn main() -> Result<()> {
     // Initialize logger

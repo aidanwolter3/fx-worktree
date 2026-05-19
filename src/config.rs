@@ -3,13 +3,13 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub fenv_root: PathBuf,
+    pub fxenv_root: PathBuf,
     pub fuchsia_dir: PathBuf,
 }
 
 impl Config {
     pub fn new(fuchsia_dir_arg: Option<PathBuf>) -> Result<Self> {
-        let fenv_root = match std::env::var("FENV_ROOT") {
+        let fxenv_root = match std::env::var("FXENV_ROOT") {
             Ok(val) => PathBuf::from(val),
             Err(_) => {
                 let home =
@@ -39,15 +39,15 @@ impl Config {
         }
 
         Ok(Config {
-            fenv_root,
+            fxenv_root,
             fuchsia_dir,
         })
     }
 
     pub fn init_topology(&self) -> Result<()> {
         let outdirs_dir = self.outdirs_dir();
-        let leases_dir = self.fenv_root.join("leases");
-        let workspaces_dir = self.fenv_root.join("workspaces");
+        let leases_dir = self.fxenv_root.join("leases");
+        let workspaces_dir = self.fxenv_root.join("workspaces");
 
         std::fs::create_dir_all(&outdirs_dir)
             .with_context(|| format!("Failed to create outdirs directory {:?}", outdirs_dir))?;
@@ -61,14 +61,14 @@ impl Config {
     }
 
     pub fn outdirs_dir(&self) -> PathBuf {
-        self.fuchsia_dir.join("out/fenv")
+        self.fuchsia_dir.join("out/fxenv")
     }
 
     pub fn leases_dir(&self) -> PathBuf {
-        self.fenv_root.join("leases")
+        self.fxenv_root.join("leases")
     }
 
     pub fn workspaces_dir(&self) -> PathBuf {
-        self.fenv_root.join("workspaces")
+        self.fxenv_root.join("workspaces")
     }
 }
