@@ -363,21 +363,15 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
         log::info!("Copied build/cipd.gni");
     }
 
-    // 6. Wire Build Directory
-    log::info!("Wiring build directory...");
+    // 6. Wire Build Directory (Moved for RBE support)
+    log::info!("Moving outdir to workspace...");
     let workspace_out = workspace_path.join("out");
     fs::create_dir_all(&workspace_out)
         .with_context(|| format!("Failed to create workspace out dir {:?}", workspace_out))?;
 
     let workspace_out_default = workspace_out.join("default");
-    std::os::unix::fs::symlink(&worktree_info.outdir_path, &workspace_out_default).with_context(
-        || {
-            format!(
-                "Failed to symlink {:?} to {:?}",
-                worktree_info.outdir_path, workspace_out_default
-            )
-        },
-    )?;
+    fs::rename(&worktree_info.outdir_path, &workspace_out_default)
+        .with_context(|| format!("Failed to move outdir from {:?} to {:?}", worktree_info.outdir_path, workspace_out_default))?;
 
     let fx_build_dir_file = workspace_path.join(".fx-build-dir");
     fs::write(&fx_build_dir_file, "out/default\n")

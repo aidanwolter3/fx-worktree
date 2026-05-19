@@ -19,7 +19,6 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         .prefix("self-test-")
         .tempdir_in(&config.fenv_root)
         .context("Failed to create temporary FENV_ROOT directory")?;
-
     let test_config = Config {
         fenv_root: temp_fenv_root.path().to_path_buf(),
         fuchsia_dir: config.fuchsia_dir.clone(),
@@ -72,8 +71,8 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
             outdir_id = id_or_path;
         }
     } else {
-        log::info!("Creating test outdir (RBE off)...");
-        let id = create_outdir(&test_config, config_name, &["--rbe-mode=off".to_string()])
+        log::info!("Creating test outdir...");
+        let id = create_outdir(&test_config, config_name, &[])
             .context("Failed to create test outdir")?;
         outdir_id = id.clone();
         preferred_outdir_id = Some(id);
@@ -135,6 +134,8 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         .context("Failed to allocate worktree")?;
     log::info!("Allocated workspace: {:?}", worktree_info.workspace_path);
 
+    let ws_obj_file_path = worktree_info.workspace_path.join("out/default").join(obj_relative_path);
+
     // Resolve fx path in workspace
     let ws_fx_bin = worktree_info.workspace_path.join("scripts/fx");
     let ws_fx_cmd = if ws_fx_bin.exists() {
@@ -153,7 +154,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
     )
     .context("Failed to build in workspace (no changes)")?;
 
-    let t2 = get_modify_time(&obj_file_path)?;
+    let t2 = get_modify_time(&ws_obj_file_path)?;
     log::info!("Workspace build completed successfully.");
 
     // 6. Modify file in workspace
@@ -198,7 +199,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
     )
     .context("Failed to build in workspace with changes")?;
 
-    let t3 = get_modify_time(&obj_file_path)?;
+    let t3 = get_modify_time(&ws_obj_file_path)?;
     if t3 <= t2 {
         return Err(anyhow!(
             "Build in workspace with changes did not compile the file! Object file was not updated: t2={:?}, t3={:?}",
@@ -227,7 +228,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         )
         .context("Failed to rebuild after restoring source file")?;
 
-        let t4 = get_modify_time(&obj_file_path)?;
+        let t4 = get_modify_time(&ws_obj_file_path)?;
         log::info!("Build cache restored. Object file modify time: {:?}", t4);
 
         // Also restore build.ninja in base repo

@@ -38,6 +38,18 @@ pub fn free_worktree_by_id(config: &Config, worktree_id: &str) -> Result<()> {
 pub fn free_worktree_internal(config: &Config, worktree_info: &WorktreeInfo) -> Result<()> {
     log::info!("Freeing worktree {}", worktree_info.worktree_id);
 
+    // Move outdir back to pool if it exists in workspace (before git worktree remove deletes it)
+    let workspace_outdir = worktree_info.workspace_path.join("out/default");
+    if workspace_outdir.exists() {
+        log::info!("Moving outdir back to pool: {:?}", worktree_info.outdir_path);
+        if let Some(parent) = worktree_info.outdir_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+        }
+        fs::rename(&workspace_outdir, &worktree_info.outdir_path)
+            .with_context(|| format!("Failed to move outdir back from {:?} to {:?}", workspace_outdir, worktree_info.outdir_path))?;
+    }
+
     // 2. Remove Git Worktrees
     if worktree_info.workspace_path.exists() {
         let worktrees = find_worktrees(&worktree_info.workspace_path)?;
