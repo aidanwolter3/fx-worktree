@@ -23,69 +23,91 @@ pub fn allocate(
     config_name: &str,
     agent_id: &str,
     preferred_outdir_id: Option<&str>,
+    forced_outdir_path: Option<PathBuf>,
 ) -> Result<WorktreeInfo> {
-    // 1. Acquire Atomic Lock
-    let outdir_config_dir = config.outdirs_dir().join(config_name);
-    if !outdir_config_dir.exists() {
-        return Err(anyhow!(
-            "Outdir config {:?} does not exist. Add it first using 'outdir create'.",
-            config_name
-        ));
-    }
-
-    let entries = fs::read_dir(&outdir_config_dir)
-        .with_context(|| format!("Failed to read outdirs directory {:?}", outdir_config_dir))?;
-
     let mut acquired_lease = None;
     let mut outdir_path = PathBuf::new();
     let mut out_id = String::new();
 
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                if let Some(id) = dir_name.strip_prefix("out_") {
-                    if let Some(pref_id) = preferred_outdir_id {
-                        if id != pref_id {
-                            continue;
-                        }
-                    }
-                    let args_gn_ref = path.join("args.gn.ref");
-                    if !args_gn_ref.exists() {
-                        log::warn!("Skipping invalid/corrupted outdir {:?}", path);
-                        continue;
-                    }
-                    let lease_file_name = format!("{}_{}.lease", config_name, id);
-                    let lease_file_path = config.leases_dir().join(&lease_file_name);
-                    log::info!(
-                        "DEBUG: leases_dir={:?}, exists={}",
-                        config.leases_dir(),
-                        config.leases_dir().exists()
-                    );
+    if let Some(path) = forced_outdir_path {
+        if !path.exists() {
+            return Err(anyhow!("Forced outdir path {:?} does not exist", path));
+        }
+        let uuid = Uuid::new_v4().to_string();
+        let lease_file_name = format!("{}_{}.lease", config_name, uuid);
+        let lease_file_path = config.leases_dir().join(&lease_file_name);
 
-                    // Attempt to create lease file atomically
-                    match fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&lease_file_path)
-                    {
-                        Ok(_) => {
-                            log::info!("Acquired lease lock: {:?}", lease_file_path);
-                            acquired_lease = Some(lease_file_path);
-                            outdir_path = path.clone();
-                            out_id = id.to_string();
-                            break;
+        // Attempt to create lease file atomically
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lease_file_path)
+            .with_context(|| format!("Failed to create lease file {:?}", lease_file_path))?;
+
+        log::info!("Acquired lease lock for forced outdir: {:?}", lease_file_path);
+        acquired_lease = Some(lease_file_path);
+        outdir_path = path;
+        out_id = uuid;
+    } else {
+        // 1. Acquire Atomic Lock from Pool
+        let outdir_config_dir = config.outdirs_dir().join(config_name);
+        if !outdir_config_dir.exists() {
+            return Err(anyhow!(
+                "Outdir config {:?} does not exist. Add it first using 'outdir create'.",
+                config_name
+            ));
+        }
+
+        let entries = fs::read_dir(&outdir_config_dir)
+            .with_context(|| format!("Failed to read outdirs directory {:?}", outdir_config_dir))?;
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if let Some(id) = dir_name.strip_prefix("out_") {
+                        if let Some(pref_id) = preferred_outdir_id {
+                            if id != pref_id {
+                                continue;
+                            }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                            // Lease busy, try next
+                        let args_gn_ref = path.join("args.gn.ref");
+                        if !args_gn_ref.exists() {
+                            log::warn!("Skipping invalid/corrupted outdir {:?}", path);
                             continue;
                         }
-                        Err(e) => {
-                            return Err(e).context(format!(
-                                "Failed to create lease file {:?}",
-                                lease_file_path
-                            ));
+                        let lease_file_name = format!("{}_{}.lease", config_name, id);
+                        let lease_file_path = config.leases_dir().join(&lease_file_name);
+                        log::info!(
+                            "DEBUG: leases_dir={:?}, exists={}",
+                            config.leases_dir(),
+                            config.leases_dir().exists()
+                        );
+
+                        // Attempt to create lease file atomically
+                        match fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&lease_file_path)
+                        {
+                            Ok(_) => {
+                                log::info!("Acquired lease lock: {:?}", lease_file_path);
+                                acquired_lease = Some(lease_file_path);
+                                outdir_path = path.clone();
+                                out_id = id.to_string();
+                                break;
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                                // Lease busy, try next
+                                continue;
+                            }
+                            Err(e) => {
+                                return Err(e).context(format!(
+                                    "Failed to create lease file {:?}",
+                                    lease_file_path
+                                ));
+                            }
                         }
                     }
                 }

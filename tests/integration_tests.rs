@@ -168,7 +168,7 @@ fn test_full_lifecycle() {
     list_worktrees(config).unwrap();
 
     // 2. Test Worktree Create
-    let worktree_info = allocate(config, "mock_config", "test_agent", None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
     assert_eq!(worktree_info.agent_id, "test_agent");
     assert_eq!(worktree_info.config, "mock_config");
 
@@ -236,7 +236,7 @@ fn test_gc() {
 
     // Create outdir and worktree
     create_outdir(config, "mock_config", &[]).unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None).unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
 
     let lease_file = config.leases_dir().join(format!(
         "mock_config_{}.lease",

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::alloc::allocate;
@@ -28,32 +28,62 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
 
     // 2. Create or reuse test outdir
     let config_name = "fuchsia.x64";
-    let (outdir_id, should_delete_outdir) = if let Some(id) = use_outdir_id {
-        let outdir_path = config
-            .fuchsia_dir
-            .join("out/fenv")
-            .join(config_name)
-            .join(&id);
-        if !outdir_path.exists() {
-            return Err(anyhow!("Specified outdir {:?} does not exist", outdir_path));
+    let mut forced_outdir_path = None;
+    let mut preferred_outdir_id = None;
+    let mut should_delete_outdir = true;
+    let outdir_id: String;
+
+    if let Some(id_or_path) = use_outdir_id {
+        should_delete_outdir = false;
+        if id_or_path.starts_with('/') || id_or_path.starts_with('~') || id_or_path.starts_with('.') {
+            // Resolve path
+            let resolved_path = if id_or_path.starts_with('~') {
+                if let Ok(home) = std::env::var("HOME") {
+                    PathBuf::from(home).join(&id_or_path[2..])
+                } else {
+                    return Err(anyhow!("Failed to resolve HOME directory for path {}", id_or_path));
+                }
+            } else {
+                fs::canonicalize(&id_or_path)
+                    .with_context(|| format!("Failed to canonicalize path {}", id_or_path))?
+            };
+
+            if !resolved_path.exists() {
+                return Err(anyhow!("Specified outdir path {:?} does not exist", resolved_path));
+            }
+            log::info!("Reusing existing outdir path: {:?}", resolved_path);
+            forced_outdir_path = Some(resolved_path.clone());
+            outdir_id = resolved_path.file_name().and_then(|n| n.to_str()).unwrap_or("reused_outdir").to_string();
+        } else {
+            // Resolve ID
+            let outdir_path = config.fuchsia_dir.join("out/fenv").join(config_name).join(&id_or_path);
+            if !outdir_path.exists() {
+                return Err(anyhow!("Specified outdir {:?} does not exist in pool", outdir_path));
+            }
+            let args_gn_ref = outdir_path.join("args.gn.ref");
+            if !args_gn_ref.exists() {
+                return Err(anyhow!(
+                    "Specified outdir {:?} is missing args.gn.ref. It might be corrupted.",
+                    outdir_path
+                ));
+            }
+            log::info!("Reusing existing outdir from pool: {:?}", outdir_path);
+            preferred_outdir_id = Some(id_or_path.clone());
+            outdir_id = id_or_path;
         }
-        let args_gn_ref = outdir_path.join("args.gn.ref");
-        if !args_gn_ref.exists() {
-            return Err(anyhow!(
-                "Specified outdir {:?} is missing args.gn.ref. It might be corrupted.",
-                outdir_path
-            ));
-        }
-        log::info!("Reusing existing outdir: {:?}", outdir_path);
-        (id, false)
     } else {
         log::info!("Creating test outdir (RBE off)...");
         let id = create_outdir(&test_config, config_name, &["--rbe-mode=off".to_string()])
             .context("Failed to create test outdir")?;
-        (id, true)
+        outdir_id = id.clone();
+        preferred_outdir_id = Some(id);
     };
 
-    let outdir_path = test_config.outdirs_dir().join(config_name).join(&outdir_id);
+    let outdir_path = if let Some(ref path) = forced_outdir_path {
+        path.clone()
+    } else {
+        test_config.outdirs_dir().join(config_name).join(&outdir_id)
+    };
     log::info!("Test outdir path: {:?}", outdir_path);
 
     // Resolve fx path in base repo
@@ -100,8 +130,8 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
 
     // 4. Allocate worktree
     log::info!("Allocating test worktree (this will run fx gen)...");
-    let pref_id = outdir_id.strip_prefix("out_").unwrap_or(&outdir_id);
-    let worktree_info = allocate(&test_config, config_name, "self_test_agent", Some(pref_id))
+    let pref_id = preferred_outdir_id.as_deref().and_then(|id| id.strip_prefix("out_").or(Some(id)));
+    let worktree_info = allocate(&test_config, config_name, "self_test_agent", pref_id, forced_outdir_path.clone())
         .context("Failed to allocate worktree")?;
     log::info!("Allocated workspace: {:?}", worktree_info.workspace_path);
 
@@ -199,6 +229,16 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
 
         let t4 = get_modify_time(&obj_file_path)?;
         log::info!("Build cache restored. Object file modify time: {:?}", t4);
+
+        // Also restore build.ninja in base repo
+        log::info!("Restoring build.ninja in the reused outdir...");
+        run_command(
+            fx_cmd,
+            &["--dir", outdir_path.to_str().unwrap(), "gen"],
+            &config.fuchsia_dir,
+            &[],
+        )
+        .context("Failed to run fx gen in base repo to restore build.ninja")?;
     }
 
     // 8. Cleanup

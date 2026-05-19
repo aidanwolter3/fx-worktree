@@ -35,7 +35,7 @@ fn main() -> Result<()> {
                 config: cfg,
                 agent_id,
             } => {
-                let worktree_info = alloc::allocate(&config, &cfg, &agent_id, None)?;
+                let worktree_info = alloc::allocate(&config, &cfg, &agent_id, None, None)?;
                 let json = serde_json::to_string(&worktree_info)?;
                 println!("{}", json);
             }
