@@ -11,3 +11,4 @@ pub mod outdir;
 pub mod selftest;
 pub mod utils;
 pub mod worktree;
+pub mod locate;

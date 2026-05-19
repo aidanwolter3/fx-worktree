@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -70,5 +70,24 @@ impl Config {
 
     pub fn workspaces_dir(&self) -> PathBuf {
         self.fxenv_root.join("workspaces")
+    }
+
+    pub fn last_created_file(&self) -> PathBuf {
+        self.fxenv_root.join("last_created")
+    }
+
+    pub fn record_last_created(&self, path: &Path) -> Result<()> {
+        std::fs::write(self.last_created_file(), path.to_string_lossy().as_bytes())
+            .with_context(|| format!("Failed to write last_created file"))
+    }
+
+    pub fn read_last_created(&self) -> Result<PathBuf> {
+        let file = self.last_created_file();
+        if !file.exists() {
+            return Err(anyhow!("No environment has been created yet."));
+        }
+        let path_str = std::fs::read_to_string(&file)
+            .with_context(|| format!("Failed to read last_created file"))?;
+        Ok(PathBuf::from(path_str.trim()))
     }
 }

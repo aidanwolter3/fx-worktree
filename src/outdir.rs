@@ -42,6 +42,7 @@ pub fn create_outdir(config: &Config, config_name: &str) -> Result<String> {
         );
     }
 
+    config.record_last_created(&outdir_path)?;
     Ok(outdir_name)
 }
 

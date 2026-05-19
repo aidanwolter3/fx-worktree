@@ -166,6 +166,7 @@ pub fn allocate(
         return Err(e);
     }
 
+    config.record_last_created(&worktree_info.workspace_path)?;
     Ok(worktree_info)
 }
 

@@ -315,3 +315,41 @@ fn test_free_worktree_overwrite() {
     assert!(!pool_outdir.join("build.ninja").exists());
     assert!(pool_outdir.join("args.gn").exists());
 }
+
+#[test]
+fn test_locate_path() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+    use fxenv::locate::locate_path;
+
+    // 1. Test last created fallback (should error initially if nothing created)
+    assert!(locate_path(config, None).is_err());
+
+    // 2. Create outdir
+    let outdir_id = create_outdir(config, "mock_config").unwrap();
+    let pool_outdir = config.outdirs_dir().join("mock_config").join(&outdir_id);
+
+    // Locate outdir by ID
+    let path = locate_path(config, Some(outdir_id.clone())).unwrap();
+    assert_eq!(path, pool_outdir);
+
+    // Locate last created (should return the outdir)
+    let path = locate_path(config, None).unwrap();
+    assert_eq!(path, pool_outdir);
+
+    // 3. Allocate worktree
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+
+    // Locate outdir by ID (should resolve to workspace path since it is leased and moved)
+    let path = locate_path(config, Some(outdir_id.clone())).unwrap();
+    assert_eq!(path, worktree_info.workspace_path);
+
+    // Locate worktree by worktree_id
+    let path = locate_path(config, Some(worktree_info.worktree_id.clone())).unwrap();
+    assert_eq!(path, worktree_info.workspace_path);
+
+    // Locate last created (should return the workspace path now)
+    let path = locate_path(config, None).unwrap();
+    assert_eq!(path, worktree_info.workspace_path);
+}

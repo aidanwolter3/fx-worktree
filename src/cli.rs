@@ -47,6 +47,16 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Change directory to an outdir or worktree (shell wrapper required)
+    Cd {
+        /// Outdir or Worktree ID
+        id: Option<String>,
+    },
+    /// Locate the path of an outdir or worktree
+    Locate {
+        /// Outdir or Worktree ID (optional, resolves last created if omitted)
+        id: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

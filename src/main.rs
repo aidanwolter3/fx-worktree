@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use fxenv::cli::{Cli, Commands, OutdirAction, WorktreeAction};
 use fxenv::config::Config;
-use fxenv::{alloc, free, gc, list, outdir, selftest};
+use fxenv::{alloc, free, gc, list, locate, outdir, selftest};
 
 fn main() -> Result<()> {
     // Initialize logger
@@ -62,6 +62,14 @@ fn main() -> Result<()> {
             config.init_topology()?;
             selftest::run_self_test(&config, use_outdir)?;
         }
+        Commands::Cd { .. } => {
+            return Err(anyhow::anyhow!("The 'cd' command requires the fxenv shell wrapper. Make sure your shell is initialized correctly."));
+        }
+        Commands::Locate { id } => {
+            let config = Config::new(cli.fuchsia_dir)?;
+            let path = locate::locate_path(&config, id)?;
+            println!("{}", path.to_string_lossy());
+        }
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             let mut buf = Vec::new();
@@ -77,6 +85,16 @@ fn main() -> Result<()> {
                 script = script.replacen(
                     "':id -- Worktree ID:_default'",
                     "':id -- Worktree ID:_fxenv_worktree_ids'",
+                    1,
+                );
+                script = script.replacen(
+                    "'::id -- Outdir or Worktree ID:_default'",
+                    "'::id -- Outdir or Worktree ID:_fxenv_all_ids'",
+                    1,
+                );
+                script = script.replacen(
+                    "'::id -- Outdir or Worktree ID (optional, resolves last created if omitted):_default'",
+                    "'::id -- Outdir or Worktree ID (optional, resolves last created if omitted):_fxenv_all_ids'",
                     1,
                 );
 
@@ -100,6 +118,13 @@ _fxenv_worktree_ids() {
     local -a ids
     ids=($(fxenv worktree list 2>/dev/null | grep -E 'Worktree ID:' | awk '{print $3}'))
     _describe -t ids 'worktree ID' ids
+}
+
+_fxenv_all_ids() {
+    local -a ids
+    ids+=($(fxenv outdir list 2>/dev/null | grep -E '^\s+-' | awk '{print $2}'))
+    ids+=($(fxenv worktree list 2>/dev/null | grep -E 'Worktree ID:' | awk '{print $3}'))
+    _describe -t ids 'outdir/worktree ID' ids
 }
 "#);
                     script.push_str("\n");
