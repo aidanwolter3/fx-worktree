@@ -55,7 +55,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
             outdir_id = resolved_path.file_name().and_then(|n| n.to_str()).unwrap_or("reused_outdir").to_string();
         } else {
             // Resolve ID
-            let outdir_path = config.fuchsia_dir.join("out/fenv").join(config_name).join(&id_or_path);
+            let outdir_path = config.fuchsia_dir.join("out/fxenv").join(config_name).join(&id_or_path);
             if !outdir_path.exists() {
                 return Err(anyhow!("Specified outdir {:?} does not exist in pool", outdir_path));
             }
