@@ -28,7 +28,14 @@ pub enum Commands {
     ///
     /// This will temporarily create a build directory under out/fenv and a git worktree,
     /// which will be cleaned up upon completion.
-    SelfTest,
+    SelfTest {
+        /// Use an existing outdir ID instead of creating a new one.
+        ///
+        /// The target must have been already built in this outdir.
+        /// The outdir will not be deleted, and its build cache will be restored at the end.
+        #[arg(long)]
+        use_outdir: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

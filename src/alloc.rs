@@ -275,7 +275,7 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
 
     // 5. Isolate Toolchains (Optimized: Symlink prebuilts & copy generated files, skip run-hooks)
     log::info!("Isolating toolchains and copying generated files...");
-    
+
     // Symlink .jiri_root
     let base_jiri_root = config.fuchsia_dir.join(".jiri_root");
     let workspace_jiri_root = workspace_path.join(".jiri_root");
@@ -297,15 +297,21 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
     })?;
 
     // Copy ctf_releases.gni if it exists in base checkout
-    let base_ctf_gni = config.fuchsia_dir.join("sdk/ctf/build/internal/ctf_releases.gni");
+    let base_ctf_gni = config
+        .fuchsia_dir
+        .join("sdk/ctf/build/internal/ctf_releases.gni");
     let workspace_ctf_gni = workspace_path.join("sdk/ctf/build/internal/ctf_releases.gni");
     if base_ctf_gni.exists() {
         if let Some(parent) = workspace_ctf_gni.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory {:?}", parent))?;
         }
-        fs::copy(&base_ctf_gni, &workspace_ctf_gni)
-            .with_context(|| format!("Failed to copy {:?} to {:?}", base_ctf_gni, workspace_ctf_gni))?;
+        fs::copy(&base_ctf_gni, &workspace_ctf_gni).with_context(|| {
+            format!(
+                "Failed to copy {:?} to {:?}",
+                base_ctf_gni, workspace_ctf_gni
+            )
+        })?;
         log::info!("Copied ctf_releases.gni");
     }
 
@@ -326,8 +332,12 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory {:?}", parent))?;
         }
-        fs::copy(&base_cipd_gni, &workspace_cipd_gni)
-            .with_context(|| format!("Failed to copy {:?} to {:?}", base_cipd_gni, workspace_cipd_gni))?;
+        fs::copy(&base_cipd_gni, &workspace_cipd_gni).with_context(|| {
+            format!(
+                "Failed to copy {:?} to {:?}",
+                base_cipd_gni, workspace_cipd_gni
+            )
+        })?;
         log::info!("Copied build/cipd.gni");
     }
 

@@ -62,9 +62,10 @@ pub fn list_outdirs(config: &Config) -> Result<()> {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lease") {
-                if let Some(worktree_info) = fs::read_to_string(&path).ok().and_then(|content| {
-                    serde_json::from_str::<WorktreeInfo>(&content).ok()
-                }) {
+                if let Some(worktree_info) = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|content| serde_json::from_str::<WorktreeInfo>(&content).ok())
+                {
                     active_outdir_paths.insert(worktree_info.outdir_path);
                 }
             }

@@ -51,8 +51,8 @@ fn main() -> Result<()> {
                 log::info!("Garbage collection completed.");
             }
         },
-        Commands::SelfTest => {
-            selftest::run_self_test(&config)?;
+        Commands::SelfTest { use_outdir } => {
+            selftest::run_self_test(&config, use_outdir)?;
         }
     }
 

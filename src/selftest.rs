@@ -9,7 +9,7 @@ use crate::free::free_worktree_by_id;
 use crate::outdir::{create_outdir, delete_outdir};
 use crate::utils::run_command;
 
-pub fn run_self_test(config: &Config) -> Result<()> {
+pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<()> {
     log::info!("Starting self-test...");
 
     // 1. Create temporary FENV_ROOT
@@ -26,14 +26,35 @@ pub fn run_self_test(config: &Config) -> Result<()> {
     };
     test_config.init_topology()?;
 
-    // 2. Create test outdir (RBE off)
-    log::info!("Creating test outdir (RBE off)...");
+    // 2. Create or reuse test outdir
     let config_name = "fuchsia.x64";
-    let outdir_id = create_outdir(&test_config, config_name, &["--rbe-mode=off".to_string()])
-        .context("Failed to create test outdir")?;
+    let (outdir_id, should_delete_outdir) = if let Some(id) = use_outdir_id {
+        let outdir_path = config
+            .fuchsia_dir
+            .join("out/fenv")
+            .join(config_name)
+            .join(&id);
+        if !outdir_path.exists() {
+            return Err(anyhow!("Specified outdir {:?} does not exist", outdir_path));
+        }
+        let args_gn_ref = outdir_path.join("args.gn.ref");
+        if !args_gn_ref.exists() {
+            return Err(anyhow!(
+                "Specified outdir {:?} is missing args.gn.ref. It might be corrupted.",
+                outdir_path
+            ));
+        }
+        log::info!("Reusing existing outdir: {:?}", outdir_path);
+        (id, false)
+    } else {
+        log::info!("Creating test outdir (RBE off)...");
+        let id = create_outdir(&test_config, config_name, &["--rbe-mode=off".to_string()])
+            .context("Failed to create test outdir")?;
+        (id, true)
+    };
 
     let outdir_path = test_config.outdirs_dir().join(config_name).join(&outdir_id);
-    log::info!("Test outdir created: {:?}", outdir_path);
+    log::info!("Test outdir path: {:?}", outdir_path);
 
     // Resolve fx path in base repo
     let fx_abs_path = config.fuchsia_dir.join("scripts/fx");
@@ -49,28 +70,33 @@ pub fn run_self_test(config: &Config) -> Result<()> {
     let obj_file_path = outdir_path.join(obj_relative_path);
 
     // 3. Warm outdir (build in base repo)
-    log::info!("Warming outdir (building in base repo)...");
-    run_command(
-        fx_cmd,
-        &[
-            "--dir",
-            outdir_path.to_str().unwrap(),
-            "build",
-            target_label,
-        ],
-        &config.fuchsia_dir,
-        &[],
-    )
-    .context("Failed to build target in base repo to warm cache")?;
-
-    if !obj_file_path.exists() {
-        return Err(anyhow!(
-            "Expected object file {:?} was not created by base build",
-            obj_file_path
-        ));
+    if should_delete_outdir {
+        log::info!("Warming outdir (building in base repo)...");
+        run_command(
+            fx_cmd,
+            &[
+                "--dir",
+                outdir_path.to_str().unwrap(),
+                "build",
+                target_label,
+            ],
+            &config.fuchsia_dir,
+            &[],
+        )
+        .context("Failed to build target in base repo to warm cache")?;
+    } else {
+        log::info!("Verifying target is pre-built in the specified outdir...");
+        if !obj_file_path.exists() {
+            return Err(anyhow!(
+                "Expected object file {:?} was not found. You must build the target {} in the outdir first.",
+                obj_file_path,
+                target_label
+            ));
+        }
     }
+
     let t1 = get_modify_time(&obj_file_path)?;
-    log::info!("Base build successful. Object file modify time: {:?}", t1);
+    log::info!("Target object file modify time: {:?}", t1);
 
     // 4. Allocate worktree
     log::info!("Allocating test worktree (this will run fx gen)...");
@@ -160,11 +186,31 @@ pub fn run_self_test(config: &Config) -> Result<()> {
     fs::write(&file_to_mod, content)
         .context("Failed to restore source file to original content")?;
 
+    // If we reused the outdir, compile it again to restore the .o file to original state
+    if !should_delete_outdir {
+        log::info!("Restoring build cache in the reused outdir...");
+        run_command(
+            ws_fx_cmd,
+            &["build", target_label],
+            &worktree_info.workspace_path,
+            &[],
+        )
+        .context("Failed to rebuild after restoring source file")?;
+
+        let t4 = get_modify_time(&obj_file_path)?;
+        log::info!("Build cache restored. Object file modify time: {:?}", t4);
+    }
+
     // 8. Cleanup
     log::info!("Cleaning up worktree and outdir...");
     free_worktree_by_id(&test_config, &worktree_info.worktree_id)
         .context("Failed to free worktree")?;
-    delete_outdir(&test_config, config_name, &outdir_id).context("Failed to delete outdir")?;
+
+    if should_delete_outdir {
+        delete_outdir(&test_config, config_name, &outdir_id).context("Failed to delete outdir")?;
+    } else {
+        log::info!("Skipping outdir deletion (reused outdir)");
+    }
 
     log::info!("Self-test completed successfully!");
     Ok(())

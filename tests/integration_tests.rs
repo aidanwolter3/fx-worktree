@@ -281,5 +281,5 @@ fn test_self_test_command() {
     );
 
     // Run self-test. It should use the mock fx and jiri we committed.
-    run_self_test(config).unwrap();
+    run_self_test(config, None).unwrap();
 }

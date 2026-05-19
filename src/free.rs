@@ -121,9 +121,16 @@ fn find_worktrees_recursive(dir: &Path, worktrees: &mut Vec<PathBuf>) -> Result<
             if file_type.is_dir() {
                 let path = entry.path();
                 // Skip prebuilt and .jiri_root to avoid searching them (optimization)
-                if path.file_name().and_then(|n| n.to_str()).is_some_and(|name| {
-                    name == ".git" || name == "prebuilt" || name == ".jiri_root" || name == "out"
-                }) {
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| {
+                        name == ".git"
+                            || name == "prebuilt"
+                            || name == ".jiri_root"
+                            || name == "out"
+                    })
+                {
                     continue;
                 }
                 find_worktrees_recursive(&path, worktrees)?;
