@@ -44,7 +44,7 @@ Manages the shared pool of build directories. These directories reside physicall
 
 *   **Delete an Outdir**:
     ```bash
-    fxenv outdir delete --id <outdir_id>
+    fxenv outdir delete <outdir_id>
     ```
     Deletes the specified outdir from the pool (cannot delete if currently leased).
 
@@ -72,7 +72,7 @@ Allocates and frees isolated development environments.
 
 *   **Free a Workspace**:
     ```bash
-    fxenv worktree delete --id <worktree_id>
+    fxenv worktree delete <worktree_id>
     ```
     Cleans up the git worktree and **moves the build directory back to the pool**, preserving the build cache.
 

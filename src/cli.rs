@@ -56,7 +56,6 @@ pub enum OutdirAction {
     /// Delete an idle outdir
     Delete {
         /// Outdir ID (e.g. out_1234)
-        #[arg(long)]
         id: String,
     },
 }
@@ -73,7 +72,6 @@ pub enum WorktreeAction {
     /// Delete (free) a worktree
     Delete {
         /// Worktree ID
-        #[arg(long)]
         id: String,
     },
     /// List active worktrees

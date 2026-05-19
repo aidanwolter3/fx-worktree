@@ -66,13 +66,13 @@ fn main() -> Result<()> {
 
             if shell == clap_complete::Shell::Zsh {
                 script = script.replacen(
-                    "'--id=[Outdir ID (e.g. out_1234)]:ID:_default'",
-                    "'--id=[Outdir ID (e.g. out_1234)]:ID:_fxenv_outdir_ids'",
+                    "':id -- Outdir ID (e.g. out_1234):_default'",
+                    "':id -- Outdir ID (e.g. out_1234):_fxenv_outdir_ids'",
                     1,
                 );
                 script = script.replacen(
-                    "'--id=[Worktree ID]:ID:_default'",
-                    "'--id=[Worktree ID]:ID:_fxenv_worktree_ids'",
+                    "':id -- Worktree ID:_default'",
+                    "':id -- Worktree ID:_fxenv_worktree_ids'",
                     1,
                 );
 
