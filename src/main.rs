@@ -24,8 +24,8 @@ fn main() -> Result<()> {
             OutdirAction::List => {
                 list::list_outdirs(&config)?;
             }
-            OutdirAction::Delete { config: cfg, id } => {
-                outdir::delete_outdir(&config, &cfg, &id)?;
+            OutdirAction::Delete { id } => {
+                outdir::delete_outdir(&config, &id)?;
                 log::info!("Outdir deleted successfully.");
             }
         },

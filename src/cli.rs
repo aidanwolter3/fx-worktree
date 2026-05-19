@@ -50,8 +50,6 @@ pub enum OutdirAction {
     /// Delete an idle outdir
     Delete {
         #[arg(long)]
-        config: String,
-        #[arg(long)]
         id: String, // e.g. "out_1234"
     },
 }

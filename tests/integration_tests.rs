@@ -192,7 +192,7 @@ fn test_full_lifecycle() {
     list_worktrees(config).unwrap();
 
     // Test that we cannot delete the outdir while it is in use
-    let delete_res = delete_outdir(config, "mock_config", &outdir_id);
+    let delete_res = delete_outdir(config, &outdir_id);
     assert!(delete_res.is_err());
     assert!(
         delete_res
@@ -221,7 +221,7 @@ fn test_full_lifecycle() {
     assert!(!worktree_list.contains(workspace_path.to_str().unwrap()));
 
     // Now we should be able to delete the outdir
-    delete_outdir(config, "mock_config", &outdir_id).unwrap();
+    delete_outdir(config, &outdir_id).unwrap();
     assert!(!out_dir.exists());
 
     println!("--- List Outdirs after outdir delete ---");

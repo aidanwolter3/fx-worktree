@@ -29,11 +29,11 @@ Manages the shared pool of build directories. These directories reside physicall
 
 *   **Create an Outdir**:
     ```bash
-    fxenv outdir create --config <config_name> [--fx-args <args>]
+    fxenv outdir create --config <config_name>
     ```
     Creates a new build configuration inside the pool (runs `fx set`). E.g.:
     ```bash
-    fxenv outdir create --config fuchsia.x64 --fx-args "--rbe-mode=off"
+    fxenv outdir create --config fuchsia.x64
     ```
 
 *   **List Outdirs**:
@@ -44,7 +44,7 @@ Manages the shared pool of build directories. These directories reside physicall
 
 *   **Delete an Outdir**:
     ```bash
-    fxenv outdir delete --config <config_name> <outdir_id>
+    fxenv outdir delete --id <outdir_id>
     ```
     Deletes the specified outdir from the pool (cannot delete if currently leased).
 

@@ -263,7 +263,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
     }
 
     if should_delete_outdir {
-        delete_outdir(&test_config, config_name, &outdir_id).context("Failed to delete outdir")?;
+        delete_outdir(&test_config, &outdir_id).context("Failed to delete outdir")?;
     } else {
         log::info!("Skipping outdir deletion (reused outdir)");
     }
