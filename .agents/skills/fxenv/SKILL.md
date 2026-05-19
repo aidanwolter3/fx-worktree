@@ -61,8 +61,8 @@ Allocates and frees isolated development environments.
     ```json
     {
       "worktree_id": "fuchsia.x64_out_uuid",
-      "workspace_path": "/usr/local/google/home/awolter/.fuchsia-agents/workspaces/fuchsia.x64_out_uuid",
-      "outdir_path": "/usr/local/google/home/awolter/fuchsia/out/fxenv/fuchsia.x64/out_uuid",
+      "workspace_path": "/home/user/.fuchsia-agents/workspaces/fuchsia.x64_out_uuid",
+      "outdir_path": "/home/user/fuchsia/out/fxenv/fuchsia.x64/out_uuid",
       "agent_id": "my_agent",
       "config": "fuchsia.x64",
       "pid": 12345,
