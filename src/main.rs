@@ -5,8 +5,8 @@ use fxenv::config::Config;
 use fxenv::{alloc, free, gc, list, locate, outdir, selftest};
 
 fn main() -> Result<()> {
-    // Initialize logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Initialize logger (default to warn to silence info logs by default)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let cli = Cli::parse();
 
@@ -17,14 +17,22 @@ fn main() -> Result<()> {
             match action {
                 OutdirAction::Create { config: cfg } => {
                     let outdir_id = outdir::create_outdir(&config, &cfg)?;
-                    log::info!("Outdir {} created successfully.", outdir_id);
+                    if cli.json {
+                        println!("{{\"outdir_id\":\"{}\",\"config\":\"{}\"}}", outdir_id, cfg);
+                    } else {
+                        println!("✔ Outdir {} successfully created for config {}.", outdir_id, cfg);
+                    }
                 }
                 OutdirAction::List => {
-                    list::list_outdirs(&config)?;
+                    list::list_outdirs(&config, cli.json)?;
                 }
                 OutdirAction::Delete { id } => {
                     outdir::delete_outdir(&config, &id)?;
-                    log::info!("Outdir deleted successfully.");
+                    if cli.json {
+                        println!("{{\"deleted\":true,\"outdir_id\":\"{}\"}}", id);
+                    } else {
+                        println!("✔ Outdir {} successfully deleted.", id);
+                    }
                 }
             }
         }
@@ -41,19 +49,38 @@ fn main() -> Result<()> {
                         format!("agent-{}", &uuid[0..8])
                     });
                     let worktree_info = alloc::allocate(&config, &cfg, &agent_id, None, None)?;
-                    let json = serde_json::to_string(&worktree_info)?;
-                    println!("{}", json);
+                    if cli.json {
+                        let json = serde_json::to_string(&worktree_info)?;
+                        println!("{}", json);
+                    } else {
+                        println!("✔ Workspace allocated successfully!\n");
+                        println!("  ℹ Worktree ID : {}", worktree_info.worktree_id);
+                        println!("  ℹ Agent ID    : {}", worktree_info.agent_id);
+                        println!("  ℹ Config      : {}", worktree_info.config);
+                        println!("  ℹ Workspace   : {}", worktree_info.workspace_path.to_string_lossy());
+                        println!("  ℹ Outdir      : {}", worktree_info.outdir_path.to_string_lossy());
+                        println!("\nTo change directory into the workspace:");
+                        println!("  $ fxenv cd {}", worktree_info.worktree_id);
+                    }
                 }
                 WorktreeAction::Delete { id } => {
                     free::free_worktree_by_id(&config, &id)?;
-                    log::info!("Worktree deleted successfully.");
+                    if cli.json {
+                        println!("{{\"deleted\":true,\"worktree_id\":\"{}\"}}", id);
+                    } else {
+                        println!("✔ Workspace {} successfully freed and outdir restored to pool.", id);
+                    }
                 }
                 WorktreeAction::List => {
-                    list::list_worktrees(&config)?;
+                    list::list_worktrees(&config, cli.json)?;
                 }
                 WorktreeAction::Gc { timeout } => {
                     gc::garbage_collect(&config, timeout)?;
-                    log::info!("Garbage collection completed.");
+                    if cli.json {
+                        println!("{{\"gc_completed\":true}}");
+                    } else {
+                        println!("✔ Garbage collection completed.");
+                    }
                 }
             }
         }

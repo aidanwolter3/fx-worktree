@@ -66,12 +66,12 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
                     outdir_path
                 ));
             }
-            log::info!("Reusing existing outdir from pool: {:?}", outdir_path);
+            println!("Reusing existing outdir from pool: {:?}", outdir_path);
             preferred_outdir_id = Some(id_or_path.clone());
             outdir_id = id_or_path;
         }
     } else {
-        log::info!("Creating test outdir...");
+        println!("Creating test outdir...");
         let id = create_outdir(&test_config, config_name)
             .context("Failed to create test outdir")?;
         outdir_id = id.clone();
@@ -83,7 +83,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
     } else {
         test_config.outdirs_dir().join(config_name).join(&outdir_id)
     };
-    log::info!("Test outdir path: {:?}", outdir_path);
+    println!("Test outdir path: {:?}", outdir_path);
 
     // Resolve fx path in base repo
     let fx_abs_path = config.fuchsia_dir.join("scripts/fx");
@@ -104,7 +104,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
     let test_res = (|| -> Result<()> {
         // 3. Warm outdir (build in base repo)
         if should_delete_outdir {
-            log::info!("Warming outdir (building in base repo)...");
+            println!("Warming outdir (building in base repo)...");
             run_command(
                 fx_cmd,
                 &[
@@ -118,7 +118,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
             )
             .context("Failed to build target in base repo to warm cache")?;
         } else {
-            log::info!("Verifying target is pre-built in the specified outdir...");
+            println!("Verifying target is pre-built in the specified outdir...");
             if !obj_file_path.exists() {
                 return Err(anyhow!(
                     "Expected object file {:?} was not found. You must build the target {} in the outdir first.",
@@ -129,14 +129,14 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         }
 
         let t1 = get_modify_time(&obj_file_path)?;
-        log::info!("Target object file modify time: {:?}", t1);
+        println!("Target object file modify time: {:?}", t1);
 
         // 4. Allocate worktree
-        log::info!("Allocating test worktree (this will run fx gen)...");
+        println!("Allocating test worktree (this will run fx gen)...");
         let pref_id = preferred_outdir_id.as_deref().and_then(|id| id.strip_prefix("out_").or(Some(id)));
         let worktree_info = allocate(&test_config, config_name, "self_test_agent", pref_id, forced_outdir_path.clone())
             .context("Failed to allocate worktree")?;
-        log::info!("Allocated workspace: {:?}", worktree_info.workspace_path);
+        println!("Allocated workspace: {:?}", worktree_info.workspace_path);
         allocated_worktree_id = worktree_info.worktree_id.clone();
         allocated = true;
 
@@ -151,7 +151,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         };
 
         // 5. Verify build is no-op (or at least succeeds)
-        log::info!("Verifying build in workspace (no changes)...");
+        println!("Verifying build in workspace (no changes)...");
         run_command(
             ws_fx_cmd,
             &["build", target_label],
@@ -161,10 +161,10 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         .context("Failed to build in workspace (no changes)")?;
 
         let t2 = get_modify_time(&ws_obj_file_path)?;
-        log::info!("Workspace build completed successfully.");
+        println!("Workspace build completed successfully.");
 
         // 6. Modify file in workspace
-        log::info!("Modifying file in workspace...");
+        println!("Modifying file in workspace...");
         let file_to_mod = worktree_info
             .workspace_path
             .join("sdk/ctf/tests/fidl/fuchsia.diagnostics/inspect_publisher.cc");
@@ -196,7 +196,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
         std::thread::sleep(Duration::from_secs(1));
 
         // 7. Verify build compiles change
-        log::info!("Building in workspace with changes (should compile)...");
+        println!("Building in workspace with changes (should compile)...");
         run_command(
             ws_fx_cmd,
             &["build", target_label],
@@ -213,7 +213,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
                 t3
             ));
         }
-        log::info!(
+        println!(
             "Workspace build compiled changes successfully (confirmed by timestamp: t2={:?}, t3={:?}).",
             t2,
             t3
@@ -225,7 +225,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
 
         // If we reused the outdir, compile it again to restore the .o file to original state
         if !should_delete_outdir {
-            log::info!("Restoring build cache in the reused outdir...");
+            println!("Restoring build cache in the reused outdir...");
             run_command(
                 ws_fx_cmd,
                 &["build", target_label],
@@ -235,14 +235,14 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
             .context("Failed to rebuild after restoring source file")?;
 
             let t4 = get_modify_time(&ws_obj_file_path)?;
-            log::info!("Build cache restored. Object file modify time: {:?}", t4);
+            println!("Build cache restored. Object file modify time: {:?}", t4);
         }
 
         Ok(())
     })();
 
     // 8. Cleanup (Always runs)
-    log::info!("Cleaning up worktree and outdir...");
+    println!("Cleaning up worktree and outdir...");
     if allocated {
         if let Err(e) = free_worktree_by_id(&test_config, &allocated_worktree_id) {
             log::error!("Failed to free worktree during cleanup: {:?}", e);
@@ -251,7 +251,7 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
 
     // Also restore build.ninja in base repo (must do after outdir is moved back by free_worktree)
     if !should_delete_outdir {
-        log::info!("Restoring build.ninja in the reused outdir...");
+        println!("Restoring build.ninja in the reused outdir...");
         if let Err(e) = run_command(
             fx_cmd,
             &["--dir", outdir_path.to_str().unwrap(), "gen"],
@@ -265,11 +265,11 @@ pub fn run_self_test(config: &Config, use_outdir_id: Option<String>) -> Result<(
     if should_delete_outdir {
         delete_outdir(&test_config, &outdir_id).context("Failed to delete outdir")?;
     } else {
-        log::info!("Skipping outdir deletion (reused outdir)");
+        println!("Skipping outdir deletion (reused outdir)");
     }
 
     if test_res.is_ok() {
-        log::info!("Self-test completed successfully!");
+        println!("Self-test completed successfully!");
     }
     test_res
 }

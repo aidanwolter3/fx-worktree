@@ -163,9 +163,9 @@ fn test_full_lifecycle() {
     assert!(out_dir.join("args.gn.ref").exists());
 
     println!("--- List Outdirs after create ---");
-    list_outdirs(config).unwrap();
+    list_outdirs(config, false).unwrap();
     println!("--- List Worktrees after create ---");
-    list_worktrees(config).unwrap();
+    list_worktrees(config, false).unwrap();
 
     // 2. Test Worktree Create
     let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
@@ -187,9 +187,9 @@ fn test_full_lifecycle() {
     assert!(workspace_path.join(".fx-build-dir").exists());
 
     println!("--- List Outdirs after alloc ---");
-    list_outdirs(config).unwrap();
+    list_outdirs(config, false).unwrap();
     println!("--- List Worktrees after alloc ---");
-    list_worktrees(config).unwrap();
+    list_worktrees(config, false).unwrap();
 
     // Test that we cannot delete the outdir while it is in use
     let delete_res = delete_outdir(config, &outdir_id);
@@ -207,9 +207,9 @@ fn test_full_lifecycle() {
     assert!(!lease_file.exists());
 
     println!("--- List Outdirs after free ---");
-    list_outdirs(config).unwrap();
+    list_outdirs(config, false).unwrap();
     println!("--- List Worktrees after free ---");
-    list_worktrees(config).unwrap();
+    list_worktrees(config, false).unwrap();
 
     // Verify git worktree was removed from base repo
     let output = Command::new("git")
@@ -225,7 +225,7 @@ fn test_full_lifecycle() {
     assert!(!out_dir.exists());
 
     println!("--- List Outdirs after outdir delete ---");
-    list_outdirs(config).unwrap();
+    list_outdirs(config, false).unwrap();
 }
 
 #[test]

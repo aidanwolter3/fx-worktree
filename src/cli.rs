@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(long, global = true, action = clap::ArgAction::Help)]
     pub help: Option<bool>,
 
+    /// Output structured JSON instead of human-readable text
+    #[arg(long, global = true)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
