@@ -1,8 +1,8 @@
 # fxenv (Fuchsia Environment Manager)
 
-`fxenv` is a stateless, concurrent-safe CLI tool designed to provision instantaneous, isolated development workspaces for parallel agents working on Fuchsia.
+`fxenv` is a stateless, concurrent-safe CLI tool designed to provision instantaneous, isolated development environments for parallel agents working on Fuchsia.
 
-It leverages `git worktree` for source isolation, shares read-only prebuilts via symlinking, and pools RBE (Remote Build Execution) enabled build directories to maximize incremental compilation speed across workspaces.
+It pools persistent **Environments** (workspaces) on disk to preserve Ninja build timestamps and remote compiler caches, allowing sequential agents to reuse environments and achieve **no-op incremental build speeds (< 3 seconds)**, while isolating parallel runs.
 
 ---
 
@@ -14,7 +14,7 @@ cargo install --path . --force
 ```
 
 ### Zsh Shell Integration (Required for `fxenv cd`)
-Since a compiled binary runs in a child process and cannot change the working directory of your active shell, you must add a shell wrapper function to your `~/.zshrc`:
+Add the shell wrapper function to your `~/.zshrc` to support the directory navigation feature:
 
 ```zsh
 # fxenv shell wrapper for cd command
@@ -33,76 +33,75 @@ fxenv() {
 }
 ```
 
+Set up Zsh completions (optional):
+```bash
+mkdir -p ~/.zsh/completion
+fxenv completions zsh > ~/.zsh/completion/_fxenv
+# Add ~/.zsh/completion to your fpath in ~/.zshrc before compinit
+```
+
 ---
 
-## Commands and Usage Examples
+## Commands and Usage
 
-### 1. Allocate a Workspace
-Leases a build directory from the pool and sets up an isolated Git worktree for parallel development.
+### 1. Create a Pool Slot (Environment)
+Creates and bootstraps a new persistent environment slot in the pool (runs `git worktree add`, `fx set`, and registers the slot).
 ```bash
-fxenv worktree create <config_name> [--agent-id <agent_name>]
+fxenv create <config_name>
+```
+
+### 2. Allocate an Environment (Use)
+Leases a free environment of the config type, cleans it, and updates its Git worktrees to the agent's target revisions.
+```bash
+fxenv use <config_name> [--agent-id <agent_name>] [--json]
 ```
 
 *   **Default Output (Human Friendly):**
     ```none
     ✔ Workspace allocated successfully!
 
-      ℹ Worktree ID : fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397
-      ℹ Agent ID    : agent-acf27225
-      ℹ Config      : fuchsia_internal.x64
-      ℹ Workspace   : /home/user/.fuchsia-agents/workspaces/fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397
-      ℹ Outdir      : /home/user/fuchsia/out/fxenv/fuchsia_internal.x64/out_5cca349c-ba43-4b03-bda6-736d5184e397
+      ℹ Environment ID : fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5
+      ℹ Agent ID       : agent-2f26359d
+      ℹ Config         : fuchsia_internal.x64
+      ℹ Path           : /home/user/.fuchsia-agents/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5
 
     To change directory into the workspace:
-      $ fxenv cd fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397
+      $ fxenv cd fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5  # Navigate to this specific workspace
+      $ fxenv cd                     # Navigate to the last created environment
     ```
 
 *   **JSON Output (via `--json`):**
     ```json
-    {"worktree_id":"fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397","agent_id":"agent-acf27225","config":"fuchsia_internal.x64","pid":2549294,"timestamp_sec":1779221652,"workspace_path":"/home/user/.fuchsia-agents/workspaces/fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397","outdir_path":"/home/user/fuchsia/out/fxenv/fuchsia_internal.x64/out_5cca349c-ba43-4b03-bda6-736d5184e397"}
+    {"environment_id":"fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5","agent_id":"agent-2f26359d","config":"fuchsia_internal.x64","pid":2549294,"timestamp_sec":1779221652,"path":"/home/user/.fuchsia-agents/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5"}
     ```
 
-### 2. List Active Workspaces
-Shows currently leased environments.
+### 3. List Environments
+Shows all environments in the pool and their lease status.
 ```bash
-fxenv worktree list [--json]
+fxenv list [--json]
 ```
 
 *   **Default Output:**
     ```none
-    ■ fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397
-      Agent     : agent-acf27225
-      Created   : 5m 12s ago
-      Workspace : /home/user/.fuchsia-agents/workspaces/fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397
-      Outdir    : /home/user/fuchsia/out/fxenv/fuchsia_internal.x64/out_5cca349c-ba43-4b03-bda6-736d5184e397
+    CONFIG                 ENVIRONMENT ID                                     STATUS
+    fuchsia.x64            fuchsia.x64_37954053-f927-45f1-9086-01d7b07c35bf   Free
+    fuchsia_internal.x64   fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95...    In Use (agent_1)
     ```
 
-### 3. Change Directory to Workspace
-Uses the Zsh shell wrapper to navigate directly to the workspace root. If no ID is passed, it navigates to the **last created** outdir or workspace.
+### 4. Free an Environment
+Cleans the environment (resets git, runs `git clean` excluding the build cache in `out/`) and releases the lease.
 ```bash
-fxenv cd [worktree_id | outdir_id]
+fxenv free <environment_id> [--json]
 ```
 
-### 4. Free a Workspace
-Cleans up the worktree and safely moves the build directory back to the pool, preserving the build cache.
+### 5. Delete an Environment
+Completely removes the environment from disk and unregisters the worktrees.
 ```bash
-fxenv worktree delete <worktree_id> [--json]
+fxenv delete <environment_id>
 ```
 
-*   **Default Output:**
-    ```none
-    ✔ Workspace fuchsia_internal.x64_out_5cca349c-ba43-4b03-bda6-736d5184e397 successfully freed and outdir restored to pool.
-    ```
-
-### 5. List Outdir Pool Status
-Shows build directory caches in the pool and their availability.
+### 6. Change Directory into Environment
+Cds into the environment folder (resolves ID or short suffix, falls back to the last allocated environment if omitted).
 ```bash
-fxenv outdir list [--json]
+fxenv cd [environment_id]
 ```
-
-*   **Default Output:**
-    ```none
-    CONFIG                 OUTDIR ID                              STATUS
-    fuchsia.x64            out_e507270d-7129-4475-935e-f2d4127    Free
-    fuchsia_internal.x64   out_5cca349c-ba43-4b03-bda6-736d518    In Use (agent-acf27225)
-    ```

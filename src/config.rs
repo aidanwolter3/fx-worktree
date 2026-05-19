@@ -45,31 +45,24 @@ impl Config {
     }
 
     pub fn init_topology(&self) -> Result<()> {
-        let outdirs_dir = self.outdirs_dir();
-        let leases_dir = self.fxenv_root.join("leases");
-        let workspaces_dir = self.fxenv_root.join("workspaces");
+        let leases_dir = self.leases_dir();
+        let environments_dir = self.environments_dir();
 
-        std::fs::create_dir_all(&outdirs_dir)
-            .with_context(|| format!("Failed to create outdirs directory {:?}", outdirs_dir))?;
         std::fs::create_dir_all(&leases_dir)
             .with_context(|| format!("Failed to create leases directory {:?}", leases_dir))?;
-        std::fs::create_dir_all(&workspaces_dir).with_context(|| {
-            format!("Failed to create workspaces directory {:?}", workspaces_dir)
+        std::fs::create_dir_all(&environments_dir).with_context(|| {
+            format!("Failed to create environments directory {:?}", environments_dir)
         })?;
 
         Ok(())
-    }
-
-    pub fn outdirs_dir(&self) -> PathBuf {
-        self.fuchsia_dir.join("out/fxenv")
     }
 
     pub fn leases_dir(&self) -> PathBuf {
         self.fxenv_root.join("leases")
     }
 
-    pub fn workspaces_dir(&self) -> PathBuf {
-        self.fxenv_root.join("workspaces")
+    pub fn environments_dir(&self) -> PathBuf {
+        self.fxenv_root.join("environments")
     }
 
     pub fn last_created_file(&self) -> PathBuf {

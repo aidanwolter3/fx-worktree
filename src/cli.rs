@@ -23,85 +23,57 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 #[command(disable_help_flag = true)]
 pub enum Commands {
-    /// Manage warm outdirs
-    Outdir {
-        #[command(subcommand)]
-        action: OutdirAction,
-    },
-    /// Manage isolated worktrees (workspaces)
-    Worktree {
-        #[command(subcommand)]
-        action: WorktreeAction,
-    },
-    /// Run a self-test to verify fxenv functionality against a Fuchsia checkout.
-    ///
-    /// This will temporarily create a build directory under out/fxenv and a git worktree,
-    /// which will be cleaned up upon completion.
-    SelfTest {
-        /// Use an existing outdir ID instead of creating a new one.
-        ///
-        /// The target must have been already built in this outdir.
-        /// The outdir will not be deleted, and its build cache will be restored at the end.
-        #[arg(long)]
-        use_outdir: Option<String>,
-    },
-    /// Generate shell completion scripts to stdout
-    Completions {
-        /// The shell to generate completions for
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
-    },
-    /// Change directory to an outdir or worktree (shell wrapper required)
-    Cd {
-        /// Outdir or Worktree ID
-        id: Option<String>,
-    },
-    /// Locate the path of an outdir or worktree
-    Locate {
-        /// Outdir or Worktree ID (optional, resolves last created if omitted)
-        id: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-#[command(disable_help_flag = true)]
-pub enum OutdirAction {
-    /// Create a new warm outdir for a config
+    /// Create a new persistent environment in the pool
     Create {
         /// Configuration name (e.g. fuchsia.x64)
         config: String,
     },
-    /// List all outdirs and their status
-    List,
-    /// Delete an idle outdir
+    /// Delete a persistent environment from disk
     Delete {
-        /// Outdir ID (e.g. out_1234)
+        /// Environment ID to delete (must be free)
         id: String,
     },
-}
-
-#[derive(Subcommand, Debug)]
-#[command(disable_help_flag = true)]
-pub enum WorktreeAction {
-    /// Create (allocate) an isolated worktree
-    Create {
+    /// List all environments in the pool and their lease status
+    List,
+    /// Use (allocate) a free environment from the pool
+    Use {
         /// Configuration name (e.g. fuchsia.x64)
         config: String,
         /// Optional agent ID (will be randomly generated if omitted)
         #[arg(long)]
         agent_id: Option<String>,
     },
-    /// Delete (free) a worktree
-    Delete {
-        /// Worktree ID
+    /// Free (release) an environment back to the pool
+    Free {
+        /// Environment ID to free (must be leased)
         id: String,
     },
-    /// List active worktrees
-    List,
-    /// Garbage collect orphaned worktrees
+    /// Change directory to an environment (shell wrapper required)
+    Cd {
+        /// Environment ID
+        id: Option<String>,
+    },
+    /// Locate the path of an environment
+    Locate {
+        /// Environment ID
+        id: Option<String>,
+    },
+    /// Run a self-test to verify fxenv functionality
+    SelfTest {
+        /// Use an existing environment ID instead of creating a new one
+        #[arg(long)]
+        use_env: Option<String>,
+    },
+    /// Clean up orphaned or expired leases in the pool
     Gc {
-        /// Timeout in seconds (default: 14400 / 4 hours)
-        #[arg(long, default_value_t = 14400)]
+        /// Lease expiry threshold in seconds (defaults to 0: cleans all dead/orphaned leases)
+        #[arg(long, default_value = "0")]
         timeout: u64,
+    },
+    /// Generate shell completion scripts to stdout
+    Completions {
+        /// The shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
     },
 }

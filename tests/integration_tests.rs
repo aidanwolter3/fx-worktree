@@ -5,18 +5,18 @@ use std::process::Command;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-use fxenv::alloc::allocate;
 use fxenv::config::Config;
-use fxenv::free::free_worktree_by_id;
+use fxenv::create::create_environment;
+use fxenv::delete::delete_environment;
+use fxenv::allocate::allocate_environment;
+use fxenv::free::free_environment_by_id;
 use fxenv::gc::garbage_collect;
-use fxenv::list::{list_outdirs, list_worktrees};
-use fxenv::outdir::{create_outdir, delete_outdir};
+use fxenv::list::list_environments;
 use fxenv::selftest::run_self_test;
 
-// Global lock to serialize tests that modify env vars
+// Global lock to serialize tests
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-// Helper to run commands during test setup
 fn run_setup_cmd(cmd: &str, args: &[&str], cwd: &Path) {
     let status = Command::new(cmd)
         .args(args)
@@ -45,13 +45,8 @@ fn setup_mock_env() -> TestEnv {
 
     // 1. Initialize git repo in fuchsia_dir
     run_setup_cmd("git", &["init", "--initial-branch=main"], fuchsia_path);
-    // Config git user for commits in test
     run_setup_cmd("git", &["config", "user.name", "Test User"], fuchsia_path);
-    run_setup_cmd(
-        "git",
-        &["config", "user.email", "test@example.com"],
-        fuchsia_path,
-    );
+    run_setup_cmd("git", &["config", "user.email", "test@example.com"], fuchsia_path);
 
     let dummy_file = fuchsia_path.join("dummy.txt");
     fs::write(&dummy_file, "hello").unwrap();
@@ -116,15 +111,10 @@ fi
     fs::write(&fx_path, fx_script).unwrap();
     make_executable(&fx_path);
 
-    // Commit only dummy.txt and scripts/fx. .jiri_root is not tracked in real Fuchsia.
+    // Commit only dummy.txt and scripts/fx
     run_setup_cmd("git", &["add", "dummy.txt", "scripts/fx"], fuchsia_path);
-    run_setup_cmd(
-        "git",
-        &["commit", "-m", "initial commit with mocks"],
-        fuchsia_path,
-    );
+    run_setup_cmd("git", &["commit", "-m", "initial commit with mocks"], fuchsia_path);
 
-    // Set env var for FXENV_ROOT so Config::new picks it up
     unsafe {
         std::env::set_var("FXENV_ROOT", fenv_root_dir.path());
     }
@@ -151,81 +141,52 @@ fn test_full_lifecycle() {
     let env = setup_mock_env();
     let config = &env.config;
 
-    // 1. Test Outdir Create
-    let outdir_id = create_outdir(config, "mock_config").unwrap();
+    // 1. Test Environment Create
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_path = config.environments_dir().join(&env_id);
+    assert!(env_path.exists());
+    assert!(env_path.join("out/default/args.gn").exists());
+    assert!(env_path.join("out/default/args.gn.ref").exists());
 
-    let outdirs_dir = config.outdirs_dir().join("mock_config");
-    assert!(outdirs_dir.exists());
-    let out_dir = outdirs_dir.join(&outdir_id);
-    assert!(out_dir.exists());
-    assert!(outdir_id.starts_with("out_"));
-    assert!(out_dir.join("args.gn").exists());
-    assert!(out_dir.join("args.gn.ref").exists());
+    println!("--- List Environments after create ---");
+    list_environments(config, false).unwrap();
 
-    println!("--- List Outdirs after create ---");
-    list_outdirs(config, false).unwrap();
-    println!("--- List Worktrees after create ---");
-    list_worktrees(config, false).unwrap();
+    // 2. Test Environment Allocate (reuses the created slot)
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    assert_eq!(env_info.agent_id, "test_agent");
+    assert_eq!(env_info.config, "mock_config");
 
-    // 2. Test Worktree Create
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
-    assert_eq!(worktree_info.agent_id, "test_agent");
-    assert_eq!(worktree_info.config, "mock_config");
-
-    let lease_file = config.leases_dir().join(format!(
-        "mock_config_{}.lease",
-        worktree_info.worktree_id.split('_').next_back().unwrap()
-    ));
+    let lease_file = config.leases_dir().join(format!("{}.lease", env_id));
     assert!(lease_file.exists());
 
-    let workspace_path = &worktree_info.workspace_path;
-    assert!(workspace_path.exists());
+    assert!(env_info.path.join(".git").exists());
+    assert!(env_info.path.join(".jiri_root").exists());
+    assert!(env_info.path.join("out/default").exists());
+    assert!(env_info.path.join(".fx-build-dir").exists());
 
-    assert!(workspace_path.join(".git").exists());
-    assert!(workspace_path.join(".jiri_root").exists()); // Symlink
-    assert!(workspace_path.join("out/default").exists()); // Symlink
-    assert!(workspace_path.join(".fx-build-dir").exists());
+    println!("--- List Environments after allocate ---");
+    list_environments(config, false).unwrap();
 
-    println!("--- List Outdirs after alloc ---");
-    list_outdirs(config, false).unwrap();
-    println!("--- List Worktrees after alloc ---");
-    list_worktrees(config, false).unwrap();
-
-    // Test that we cannot delete the outdir while it is in use
-    let delete_res = delete_outdir(config, &outdir_id);
+    // Test that we cannot delete the environment while leased
+    let delete_res = delete_environment(config, &env_id);
     assert!(delete_res.is_err());
-    assert!(
-        delete_res
-            .unwrap_err()
-            .to_string()
-            .contains("Cannot delete outdir")
-    );
+    assert!(delete_res.unwrap_err().to_string().contains("Cannot delete environment"));
 
-    // 3. Test Worktree Delete
-    free_worktree_by_id(config, &worktree_info.worktree_id).unwrap();
-    assert!(!workspace_path.exists());
-    assert!(!lease_file.exists());
+    // 3. Test Environment Free
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+    assert!(env_info.path.exists()); // Path must remain!
+    assert!(env_info.path.join(".fxenv-completed").exists());
+    assert!(!lease_file.exists()); // Lease must be deleted
 
-    println!("--- List Outdirs after free ---");
-    list_outdirs(config, false).unwrap();
-    println!("--- List Worktrees after free ---");
-    list_worktrees(config, false).unwrap();
+    println!("--- List Environments after free ---");
+    list_environments(config, false).unwrap();
 
-    // Verify git worktree was removed from base repo
-    let output = Command::new("git")
-        .args(["worktree", "list"])
-        .current_dir(&config.fuchsia_dir)
-        .output()
-        .unwrap();
-    let worktree_list = String::from_utf8(output.stdout).unwrap();
-    assert!(!worktree_list.contains(workspace_path.to_str().unwrap()));
+    // 4. Test Environment Delete (fully cleans up)
+    delete_environment(config, &env_id).unwrap();
+    assert!(!env_path.exists()); // Directory is gone now
 
-    // Now we should be able to delete the outdir
-    delete_outdir(config, &outdir_id).unwrap();
-    assert!(!out_dir.exists());
-
-    println!("--- List Outdirs after outdir delete ---");
-    list_outdirs(config, false).unwrap();
+    println!("--- List Environments after delete ---");
+    list_environments(config, false).unwrap();
 }
 
 #[test]
@@ -234,86 +195,19 @@ fn test_gc() {
     let env = setup_mock_env();
     let config = &env.config;
 
-    // Create outdir and worktree
-    create_outdir(config, "mock_config").unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
+    // Create and allocate
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
 
-    let lease_file = config.leases_dir().join(format!(
-        "mock_config_{}.lease",
-        worktree_info.worktree_id.split('_').next_back().unwrap()
-    ));
+    let lease_file = config.leases_dir().join(format!("{}.lease", env_id));
     assert!(lease_file.exists());
 
-    // Run GC with 0 timeout (force expiry)
+    // Run GC with 0 timeout
     garbage_collect(config, 0).unwrap();
 
     assert!(!lease_file.exists());
-    assert!(!worktree_info.workspace_path.exists());
-}
-
-#[test]
-fn test_self_test_command() {
-    let _lock = TEST_LOCK.lock().unwrap();
-    let env = setup_mock_env();
-    let config = &env.config;
-
-    // Create the mock source file that self-test expects to modify
-    let src_dir = config
-        .fuchsia_dir
-        .join("sdk/ctf/tests/fidl/fuchsia.diagnostics");
-    fs::create_dir_all(&src_dir).unwrap();
-    let src_file = src_dir.join("inspect_publisher.cc");
-    fs::write(&src_file, "numeric_properties.RecordInt(\"int\", -1);").unwrap();
-
-    // Commit it so it is tracked and checked out in the temp workspace
-    run_setup_cmd(
-        "git",
-        &[
-            "add",
-            "sdk/ctf/tests/fidl/fuchsia.diagnostics/inspect_publisher.cc",
-        ],
-        &config.fuchsia_dir,
-    );
-    run_setup_cmd(
-        "git",
-        &["commit", "-m", "add inspect_publisher.cc"],
-        &config.fuchsia_dir,
-    );
-
-    // Run self-test. It should use the mock fx and jiri we committed.
-    run_self_test(config, None).unwrap();
-}
-
-#[test]
-fn test_free_worktree_overwrite() {
-    let _lock = TEST_LOCK.lock().unwrap();
-    let env = setup_mock_env();
-    let config = &env.config;
-
-    // 1. Create outdir and allocate worktree (moves outdir to workspace)
-    let outdir_id = create_outdir(config, "mock_config").unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
-
-    let pool_outdir = config.outdirs_dir().join("mock_config").join(&outdir_id);
-    let workspace_outdir = worktree_info.workspace_path.join("out/default");
-
-    assert!(!pool_outdir.exists());
-    assert!(workspace_outdir.exists());
-
-    // 2. Simulate recreation of outdir in the pool (e.g. by accidental fx gen in base repo)
-    fs::create_dir_all(&pool_outdir).unwrap();
-    fs::write(pool_outdir.join("build.ninja"), "dummy build.ninja").unwrap();
-
-    // 3. Free the worktree (should overwrite the recreated pool outdir)
-    free_worktree_by_id(config, &worktree_info.worktree_id).unwrap();
-
-    // 4. Verify it succeeded and the pool outdir contains the restored workspace contents (not the dummy one)
-    assert!(pool_outdir.exists());
-    assert!(!workspace_outdir.exists());
-
-    // The recreated build.ninja should be gone, and the original args.gn should be restored
-    assert!(!pool_outdir.join("build.ninja").exists());
-    assert!(pool_outdir.join("args.gn").exists());
+    assert!(env_info.path.exists()); // Workspace remains!
+    assert!(env_info.path.join(".fxenv-completed").exists());
 }
 
 #[test]
@@ -323,35 +217,31 @@ fn test_locate_path() {
     let config = &env.config;
     use fxenv::locate::locate_path;
 
-    // 1. Test last created fallback (should error initially if nothing created)
+    // Test last created fallback (errors initially)
     assert!(locate_path(config, None).is_err());
 
-    // 2. Create outdir
-    let outdir_id = create_outdir(config, "mock_config").unwrap();
-    let pool_outdir = config.outdirs_dir().join("mock_config").join(&outdir_id);
+    // Create environment
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_path = config.environments_dir().join(&env_id);
 
-    // Locate outdir by ID
-    let path = locate_path(config, Some(outdir_id.clone())).unwrap();
-    assert_eq!(path, pool_outdir);
+    // Locate by ID
+    let path = locate_path(config, Some(env_id.clone())).unwrap();
+    assert_eq!(path, env_path);
 
-    // Locate last created (should return the outdir)
+    // Locate last created (returns same path)
     let path = locate_path(config, None).unwrap();
-    assert_eq!(path, pool_outdir);
+    assert_eq!(path, env_path);
 
-    // 3. Allocate worktree
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
+    // Allocate
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
 
-    // Locate outdir by ID (should resolve to workspace path since it is leased and moved)
-    let path = locate_path(config, Some(outdir_id.clone())).unwrap();
-    assert_eq!(path, worktree_info.workspace_path);
+    // Locate by ID (resolves to same path)
+    let path = locate_path(config, Some(env_id.clone())).unwrap();
+    assert_eq!(path, env_info.path);
 
-    // Locate worktree by worktree_id
-    let path = locate_path(config, Some(worktree_info.worktree_id.clone())).unwrap();
-    assert_eq!(path, worktree_info.workspace_path);
-
-    // Locate last created (should return the workspace path now)
+    // Locate last created
     let path = locate_path(config, None).unwrap();
-    assert_eq!(path, worktree_info.workspace_path);
+    assert_eq!(path, env_info.path);
 }
 
 #[test]
@@ -360,21 +250,54 @@ fn test_git_symlink_conversion() {
     let env = setup_mock_env();
     let config = &env.config;
 
-    // 1. Create outdir and allocate worktree
-    create_outdir(config, "mock_config").unwrap();
-    let worktree_info = allocate(config, "mock_config", "test_agent", None, None, true).unwrap();
+    // 1. Create environment (runs worktree add and converts .git to symlink)
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_path = config.environments_dir().join(&env_id);
 
-    // 2. Verify that .git in workspace is a symlink
-    let git_file_path = worktree_info.workspace_path.join(".git");
+    let git_file_path = env_path.join(".git");
     assert!(git_file_path.exists());
     let metadata = fs::symlink_metadata(&git_file_path).unwrap();
     assert!(metadata.file_type().is_symlink());
 
-    // Verify it points to the worktrees folder in the base repo
-    let link_target = fs::read_link(&git_file_path).unwrap();
-    assert!(link_target.to_string_lossy().contains(".git/worktrees"));
+    // 2. Allocate (keeps symlink)
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let metadata = fs::symlink_metadata(&git_file_path).unwrap();
+    assert!(metadata.file_type().is_symlink());
 
-    // 3. Free the worktree (should convert it back and remove successfully)
-    free_worktree_by_id(config, &worktree_info.worktree_id).unwrap();
-    assert!(!worktree_info.workspace_path.exists());
+    // 3. Free (keeps symlink)
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+    let metadata = fs::symlink_metadata(&git_file_path).unwrap();
+    assert!(metadata.file_type().is_symlink());
+
+    // 4. Delete (converts it back to file, and removes it)
+    delete_environment(config, &env_id).unwrap();
+    assert!(!env_path.exists());
+}
+
+#[test]
+fn test_self_test_command() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    let src_dir = config
+        .fuchsia_dir
+        .join("sdk/ctf/tests/fidl/fuchsia.diagnostics");
+    fs::create_dir_all(&src_dir).unwrap();
+    let src_file = src_dir.join("inspect_publisher.cc");
+    fs::write(&src_file, "numeric_properties.RecordInt(\"int\", -1);").unwrap();
+
+    run_setup_cmd(
+        "git",
+        &["add", "sdk/ctf/tests/fidl/fuchsia.diagnostics/inspect_publisher.cc"],
+        &config.fuchsia_dir,
+    );
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "add inspect_publisher.cc"],
+        &config.fuchsia_dir,
+    );
+
+    // Run self-test
+    run_self_test(config, None).unwrap();
 }

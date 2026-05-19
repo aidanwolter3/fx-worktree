@@ -1,0 +1,243 @@
+use crate::config::Config;
+use crate::utils::run_command;
+use anyhow::{Context, Result, anyhow};
+use rayon::prelude::*;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
+
+#[derive(serde::Deserialize, Debug, Clone)]
+struct JiriProject {
+    name: String,
+    path: String,
+    revision: String,
+}
+
+pub fn create_environment(config: &Config, config_name: &str) -> Result<String> {
+    let uuid = Uuid::new_v4().to_string();
+    let env_id = format!("{}_{}", config_name, uuid);
+    let env_path = config.environments_dir().join(&env_id);
+
+    println!("Creating environment {}...", env_id);
+
+    // 1. Create directory structure
+    fs::create_dir_all(&env_path)
+        .with_context(|| format!("Failed to create environment directory {:?}", env_path))?;
+
+    // Implement cleanup helper in case creation fails in the middle
+    let cleanup = || {
+        log::warn!("Environment creation failed, cleaning up {:?}", env_path);
+        let _ = fs::remove_dir_all(&env_path);
+    };
+
+    if let Err(e) = provision_workspace(config, &env_path) {
+        cleanup();
+        return Err(e);
+    }
+
+    // 2. Create physical out/default
+    let out_dir = env_path.join("out/default");
+    fs::create_dir_all(&out_dir)
+        .with_context(|| format!("Failed to create build directory {:?}", out_dir))?;
+
+    // 3. Write .fx-build-dir
+    let fx_build_dir_file = env_path.join(".fx-build-dir");
+    fs::write(&fx_build_dir_file, "out/default\n")
+        .with_context(|| format!("Failed to write {:?}", fx_build_dir_file))?;
+
+    // 4. Run fx set in the workspace
+    println!("Running fx set {}...", config_name);
+    let fx_bin = env_path.join("scripts/fx");
+    let fx_cmd = if fx_bin.exists() {
+        fx_bin.to_str().unwrap()
+    } else {
+        "fx"
+    };
+
+    run_command(
+        fx_cmd,
+        &[
+            "--dir",
+            "out/default",
+            "set",
+            config_name,
+        ],
+        &env_path,
+        &[],
+    )
+    .context("Failed to run fx set in environment")?;
+
+    // 5. Snapshot args.gn
+    let args_gn = out_dir.join("args.gn");
+    let args_gn_ref = out_dir.join("args.gn.ref");
+    if args_gn.exists() {
+        fs::copy(&args_gn, &args_gn_ref).with_context(|| {
+            format!("Failed to snapshot {:?} to {:?}", args_gn, args_gn_ref)
+        })?;
+        log::info!("Created args.gn.ref");
+    } else {
+        log::warn!("args.gn not found after fx set. This might happen if fx set was mocked.");
+    }
+
+    // 6. Write completion marker
+    fs::write(env_path.join(".fxenv-completed"), "")
+        .with_context(|| format!("Failed to write completion marker"))?;
+
+    config.record_last_created(&env_path)?;
+
+    Ok(env_id)
+}
+
+fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
+    // 1. Parse Jiri State from base repository
+    println!("Querying Fuchsia project structure...");
+    let temp_jiri_json = std::env::temp_dir().join(format!("jiri_{}.json", Uuid::new_v4()));
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
+    } else {
+        "jiri"
+    };
+
+    run_command(
+        jiri_cmd,
+        &["project", "-json-output", temp_jiri_json.to_str().unwrap()],
+        &config.fuchsia_dir,
+        &[],
+    )
+    .context("Failed to run jiri project in base repo")?;
+
+    let jiri_json = fs::read_to_string(&temp_jiri_json).context("Failed to read jiri json")?;
+    let projects: Vec<JiriProject> = serde_json::from_str(&jiri_json).context("Failed to parse Jiri JSON")?;
+    let _ = fs::remove_file(&temp_jiri_json);
+
+    let mut root_project = None;
+    let mut sub_projects = Vec::new();
+
+    for project in &projects {
+        let rel_path = Path::new(&project.path)
+            .strip_prefix(&config.fuchsia_dir)
+            .context("Failed to strip prefix from project path")?;
+        if rel_path.as_os_str().is_empty() {
+            root_project = Some(project);
+        } else {
+            sub_projects.push(project);
+        }
+    }
+
+    // 2. Provision Root Git Worktree
+    if let Some(root) = root_project {
+        log::info!("Provisioning root git worktree at {:?}", workspace_path);
+        run_command(
+            "git",
+            &[
+                "worktree",
+                "add",
+                "-f",
+                "--detach",
+                workspace_path.to_str().unwrap(),
+                &root.revision,
+            ],
+            Path::new(&root.path),
+            &[],
+        )
+        .with_context(|| "Failed to add root git worktree")?;
+        convert_gitdir_to_symlink(workspace_path)?;
+    } else {
+        return Err(anyhow!("Root project not found in Jiri projects"));
+    }
+
+    // Copy .jiri_manifest if it exists in base checkout
+    let base_manifest = config.fuchsia_dir.join(".jiri_manifest");
+    let workspace_manifest = workspace_path.join(".jiri_manifest");
+    if base_manifest.exists() {
+        log::info!("Copying .jiri_manifest to workspace...");
+        fs::copy(&base_manifest, &workspace_manifest).with_context(|| {
+            format!("Failed to copy .jiri_manifest to {:?}", workspace_manifest)
+        })?;
+    }
+
+    // Group sub-projects by path depth
+    let mut groups: BTreeMap<usize, Vec<&JiriProject>> = BTreeMap::new();
+    for project in &sub_projects {
+        let rel_path = Path::new(&project.path)
+            .strip_prefix(&config.fuchsia_dir)
+            .context("Failed to strip prefix from project path")?;
+        let depth = rel_path.components().count();
+        groups.entry(depth).or_default().push(project);
+    }
+
+    // 3. Provision sub-projects group by group in parallel
+    for (depth, group) in groups {
+        log::info!("Provisioning sub-projects at depth {} (count: {})...", depth, group.len());
+        println!("Provisioning Git worktrees at depth {}...", depth);
+        group.par_iter().try_for_each(|project| -> Result<()> {
+            let rel_path = Path::new(&project.path)
+                .strip_prefix(&config.fuchsia_dir)
+                .context("Failed to strip prefix from project path")?;
+
+            let target_path = workspace_path.join(rel_path);
+
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory {:?}", parent))?;
+            }
+
+            run_command(
+                "git",
+                &[
+                    "worktree",
+                    "add",
+                    "-f",
+                    "--detach",
+                    target_path.to_str().unwrap(),
+                    &project.revision,
+                ],
+                Path::new(&project.path),
+                &[],
+            )
+            .with_context(|| format!("Failed to add git worktree for {}", project.name))?;
+            convert_gitdir_to_symlink(&target_path)?;
+
+            Ok(())
+        })?;
+    }
+
+    // 4. Isolate Toolchains (Symlink prebuilts & copy generated files)
+    println!("Isolating toolchains...");
+    let base_jiri_root = config.fuchsia_dir.join(".jiri_root");
+    let workspace_jiri_root = workspace_path.join(".jiri_root");
+    std::os::unix::fs::symlink(&base_jiri_root, &workspace_jiri_root).with_context(|| {
+        format!("Failed to symlink {:?} to {:?}", base_jiri_root, workspace_jiri_root)
+    })?;
+
+    let base_prebuilt = config.fuchsia_dir.join("prebuilt");
+    let workspace_prebuilt = workspace_path.join("prebuilt");
+    std::os::unix::fs::symlink(&base_prebuilt, &workspace_prebuilt).with_context(|| {
+        format!("Failed to symlink {:?} to {:?}", base_prebuilt, workspace_prebuilt)
+    })?;
+
+    // Copy Jiri generated files
+    crate::utils::copy_toolchain_metadata(config, workspace_path)?;
+
+    Ok(())
+}
+
+fn convert_gitdir_to_symlink(repo_path: &Path) -> Result<()> {
+    let git_file_path = repo_path.join(".git");
+    if git_file_path.exists() && git_file_path.is_file() {
+        let contents = fs::read_to_string(&git_file_path)
+            .with_context(|| format!("Failed to read {:?}", git_file_path))?;
+        if let Some(gitdir_line) = contents.lines().next() {
+            if let Some(gitdir_path_str) = gitdir_line.strip_prefix("gitdir: ") {
+                let gitdir_path = PathBuf::from(gitdir_path_str.trim());
+                fs::remove_file(&git_file_path)
+                    .with_context(|| format!("Failed to delete {:?}", git_file_path))?;
+                std::os::unix::fs::symlink(&gitdir_path, &git_file_path)
+                    .with_context(|| format!("Failed to symlink {:?} to {:?}", gitdir_path, git_file_path))?;
+            }
+        }
+    }
+    Ok(())
+}

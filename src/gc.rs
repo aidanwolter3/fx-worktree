@@ -3,12 +3,12 @@ use std::fs;
 use std::time::SystemTime;
 
 use crate::config::Config;
-use crate::free::free_worktree_internal;
-use crate::worktree::WorktreeInfo;
+use crate::free::free_environment_internal;
+use crate::environment::EnvironmentInfo;
 
 pub fn garbage_collect(config: &Config, timeout_sec: u64) -> Result<()> {
     log::info!(
-        "Starting garbage collection of worktrees (timeout: {}s)...",
+        "Starting garbage collection of environments (timeout: {}s)...",
         timeout_sec
     );
 
@@ -31,52 +31,52 @@ pub fn garbage_collect(config: &Config, timeout_sec: u64) -> Result<()> {
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lease") {
             log::debug!("Checking lease file {:?}", path);
 
-            let worktree_json = match fs::read_to_string(&path) {
+            let env_json = match fs::read_to_string(&path) {
                 Ok(content) => content,
                 Err(e) => {
-                    log::error!("Failed to read worktree file {:?}: {:?}", path, e);
+                    log::error!("Failed to read lease file {:?}: {:?}", path, e);
                     continue;
                 }
             };
 
-            let worktree_info: WorktreeInfo = match serde_json::from_str(&worktree_json) {
+            let env_info: EnvironmentInfo = match serde_json::from_str(&env_json) {
                 Ok(w) => w,
                 Err(e) => {
-                    log::error!("Failed to parse worktree JSON in {:?}: {:?}", path, e);
+                    log::error!("Failed to parse EnvironmentInfo JSON in {:?}: {:?}", path, e);
                     continue;
                 }
             };
 
-            let is_dead = !is_process_alive(worktree_info.pid);
-            let is_expired = (current_time - worktree_info.timestamp_sec) >= timeout_sec;
+            let is_dead = !is_process_alive(env_info.pid);
+            let is_expired = (current_time - env_info.timestamp_sec) >= timeout_sec;
 
             if is_dead || is_expired {
                 if is_dead {
                     log::info!(
-                        "Worktree {} is orphaned (PID {} is dead)",
-                        worktree_info.worktree_id,
-                        worktree_info.pid
+                        "Environment {} is orphaned (PID {} is dead)",
+                        env_info.environment_id,
+                        env_info.pid
                     );
                 } else {
                     log::info!(
-                        "Worktree {} is expired (age: {}s)",
-                        worktree_info.worktree_id,
-                        current_time - worktree_info.timestamp_sec
+                        "Environment {} is expired (age: {}s)",
+                        env_info.environment_id,
+                        current_time - env_info.timestamp_sec
                     );
                 }
 
-                match free_worktree_internal(config, &worktree_info) {
+                match free_environment_internal(&env_info) {
                     Ok(_) => {
                         if let Err(e) = fs::remove_file(&path) {
                             log::error!("Failed to remove lease file {:?}: {:?}", path, e);
                         } else {
-                            log::info!("Cleaned up worktree {}", worktree_info.worktree_id);
+                            log::info!("Cleaned up environment {}", env_info.environment_id);
                         }
                     }
                     Err(e) => {
                         log::error!(
-                            "Failed to free worktree {}: {:?}",
-                            worktree_info.worktree_id,
+                            "Failed to free environment {}: {:?}",
+                            env_info.environment_id,
                             e
                         );
                     }
