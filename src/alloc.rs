@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::free::free_worktree_internal;
-use crate::utils::run_command;
+use crate::utils::{copy_dir_all, run_command};
 use crate::worktree::WorktreeInfo;
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -273,12 +273,12 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
         })?;
     }
 
-    // 5. Isolate Toolchains
-    log::info!("Symlinking .jiri_root and running jiri run-hooks...");
+    // 5. Isolate Toolchains (Optimized: Symlink prebuilts & copy generated files, skip run-hooks)
+    log::info!("Isolating toolchains and copying generated files...");
+    
+    // Symlink .jiri_root
     let base_jiri_root = config.fuchsia_dir.join(".jiri_root");
     let workspace_jiri_root = workspace_path.join(".jiri_root");
-
-    // std::os::unix::fs::symlink is POSIX specific, which matches our target OS
     std::os::unix::fs::symlink(&base_jiri_root, &workspace_jiri_root).with_context(|| {
         format!(
             "Failed to symlink {:?} to {:?}",
@@ -286,12 +286,50 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
         )
     })?;
 
-    // Run jiri run-hooks in the workspace
-    // We need to make sure jiri is in PATH or use absolute path.
-    // If we use absolute path to jiri, it might need to know where it is.
-    // jiri run-hooks uses .jiri_root in cwd to find config.
-    run_command(jiri_cmd, &["run-hooks"], workspace_path, &[])
-        .context("Failed to run jiri run-hooks in workspace")?;
+    // Symlink prebuilt directory
+    let base_prebuilt = config.fuchsia_dir.join("prebuilt");
+    let workspace_prebuilt = workspace_path.join("prebuilt");
+    std::os::unix::fs::symlink(&base_prebuilt, &workspace_prebuilt).with_context(|| {
+        format!(
+            "Failed to symlink {:?} to {:?}",
+            base_prebuilt, workspace_prebuilt
+        )
+    })?;
+
+    // Copy ctf_releases.gni if it exists in base checkout
+    let base_ctf_gni = config.fuchsia_dir.join("sdk/ctf/build/internal/ctf_releases.gni");
+    let workspace_ctf_gni = workspace_path.join("sdk/ctf/build/internal/ctf_releases.gni");
+    if base_ctf_gni.exists() {
+        if let Some(parent) = workspace_ctf_gni.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+        }
+        fs::copy(&base_ctf_gni, &workspace_ctf_gni)
+            .with_context(|| format!("Failed to copy {:?} to {:?}", base_ctf_gni, workspace_ctf_gni))?;
+        log::info!("Copied ctf_releases.gni");
+    }
+
+    // Copy build/info/jiri_generated directory
+    let base_info_dir = config.fuchsia_dir.join("build/info/jiri_generated");
+    let workspace_info_dir = workspace_path.join("build/info/jiri_generated");
+    if base_info_dir.exists() {
+        copy_dir_all(&base_info_dir, &workspace_info_dir)
+            .context("Failed to copy build/info/jiri_generated directory")?;
+        log::info!("Copied build/info/jiri_generated");
+    }
+
+    // Copy build/cipd.gni if it exists in base checkout
+    let base_cipd_gni = config.fuchsia_dir.join("build/cipd.gni");
+    let workspace_cipd_gni = workspace_path.join("build/cipd.gni");
+    if base_cipd_gni.exists() {
+        if let Some(parent) = workspace_cipd_gni.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
+        }
+        fs::copy(&base_cipd_gni, &workspace_cipd_gni)
+            .with_context(|| format!("Failed to copy {:?} to {:?}", base_cipd_gni, workspace_cipd_gni))?;
+        log::info!("Copied build/cipd.gni");
+    }
 
     // 6. Wire Build Directory
     log::info!("Wiring build directory...");

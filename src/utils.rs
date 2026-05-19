@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -35,4 +36,22 @@ pub fn run_command(
     }
 
     Ok(output)
+}
+
+pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
+    fs::create_dir_all(&dst)
+        .with_context(|| format!("Failed to create directory {:?}", dst.as_ref()))?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            let src_path = entry.path();
+            let dst_path = dst.as_ref().join(entry.file_name());
+            fs::copy(&src_path, &dst_path)
+                .with_context(|| format!("Failed to copy {:?} to {:?}", src_path, dst_path))?;
+        }
+    }
+    Ok(())
 }
