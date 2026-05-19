@@ -231,6 +231,7 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
             &[],
         )
         .with_context(|| "Failed to add root git worktree")?;
+        convert_gitdir_to_symlink(workspace_path)?;
     } else {
         return Err(anyhow!("Root project not found in Jiri projects"));
     }
@@ -291,6 +292,7 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
                 &[],
             )
             .with_context(|| format!("Failed to add git worktree for {}", project.name))?;
+            convert_gitdir_to_symlink(&target_path)?;
 
             Ok(())
         })?;
@@ -395,5 +397,24 @@ fn provision_workspace(config: &Config, worktree_info: &WorktreeInfo) -> Result<
     run_command(fx_cmd, &["gen"], workspace_path, &[])
         .context("Failed to run fx gen in workspace")?;
 
+    Ok(())
+}
+
+fn convert_gitdir_to_symlink(repo_path: &Path) -> Result<()> {
+    let git_file_path = repo_path.join(".git");
+    if git_file_path.exists() && git_file_path.is_file() {
+        let contents = fs::read_to_string(&git_file_path)
+            .with_context(|| format!("Failed to read {:?}", git_file_path))?;
+        if let Some(gitdir_line) = contents.lines().next() {
+            if let Some(gitdir_path_str) = gitdir_line.strip_prefix("gitdir: ") {
+                let gitdir_path = PathBuf::from(gitdir_path_str.trim());
+                fs::remove_file(&git_file_path)
+                    .with_context(|| format!("Failed to delete {:?}", git_file_path))?;
+                std::os::unix::fs::symlink(&gitdir_path, &git_file_path)
+                    .with_context(|| format!("Failed to symlink {:?} to {:?}", gitdir_path, git_file_path))?;
+                log::debug!("Converted .git file to symlink for {:?}", repo_path);
+            }
+        }
+    }
     Ok(())
 }

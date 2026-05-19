@@ -353,3 +353,28 @@ fn test_locate_path() {
     let path = locate_path(config, None).unwrap();
     assert_eq!(path, worktree_info.workspace_path);
 }
+
+#[test]
+fn test_git_symlink_conversion() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create outdir and allocate worktree
+    create_outdir(config, "mock_config").unwrap();
+    let worktree_info = allocate(config, "mock_config", "test_agent", None, None).unwrap();
+
+    // 2. Verify that .git in workspace is a symlink
+    let git_file_path = worktree_info.workspace_path.join(".git");
+    assert!(git_file_path.exists());
+    let metadata = fs::symlink_metadata(&git_file_path).unwrap();
+    assert!(metadata.file_type().is_symlink());
+
+    // Verify it points to the worktrees folder in the base repo
+    let link_target = fs::read_link(&git_file_path).unwrap();
+    assert!(link_target.to_string_lossy().contains(".git/worktrees"));
+
+    // 3. Free the worktree (should convert it back and remove successfully)
+    free_worktree_by_id(config, &worktree_info.worktree_id).unwrap();
+    assert!(!worktree_info.workspace_path.exists());
+}

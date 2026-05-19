@@ -59,6 +59,9 @@ pub fn free_worktree_internal(config: &Config, worktree_info: &WorktreeInfo) -> 
     if worktree_info.workspace_path.exists() {
         let worktrees = find_worktrees(&worktree_info.workspace_path)?;
         for worktree_path in worktrees {
+            if let Err(e) = restore_git_file(&worktree_path) {
+                log::error!("Failed to restore .git file at {:?}: {:?}", worktree_path, e);
+            }
             if let Err(e) = remove_worktree(config, &worktree_info.workspace_path, &worktree_path) {
                 log::error!("Failed to remove worktree at {:?}: {:?}", worktree_path, e);
                 // Continue cleaning up others
@@ -186,5 +189,23 @@ fn remove_worktree(config: &Config, workspace_root: &Path, worktree_path: &Path)
     )
     .with_context(|| format!("Failed to remove git worktree at {:?}", worktree_path))?;
 
+    Ok(())
+}
+
+fn restore_git_file(repo_path: &Path) -> Result<()> {
+    let git_file_path = repo_path.join(".git");
+    if git_file_path.exists() {
+        let metadata = fs::symlink_metadata(&git_file_path)
+            .with_context(|| format!("Failed to get metadata for {:?}", git_file_path))?;
+        if metadata.file_type().is_symlink() {
+            let gitdir_path = fs::read_link(&git_file_path)
+                .with_context(|| format!("Failed to read link {:?}", git_file_path))?;
+            fs::remove_file(&git_file_path)
+                .with_context(|| format!("Failed to delete symlink {:?}", git_file_path))?;
+            fs::write(&git_file_path, format!("gitdir: {}\n", gitdir_path.to_string_lossy()))
+                .with_context(|| format!("Failed to write .git file at {:?}", git_file_path))?;
+            log::debug!("Restored .git file from symlink for {:?}", repo_path);
+        }
+    }
     Ok(())
 }
