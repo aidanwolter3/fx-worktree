@@ -79,6 +79,13 @@ fn setup_mock_env() -> TestEnv {
 
     let jiri_script = format!(
         r#"#!/bin/bash
+cwd=$(pwd)
+commit_msg=$(git -C "$cwd" log -n 1 --format=%s 2>/dev/null || echo "")
+version="version:1"
+if [ "$commit_msg" = "bump root" ]; then
+  version="version:2"
+fi
+
 if [ "$1" = "project" ] && [ "$2" = "-json-output" ]; then
   output_file=$3
   revision=$(git -C "{}" rev-parse HEAD)
@@ -97,8 +104,23 @@ if [ "$1" = "project" ] && [ "$2" = "-json-output" ]; then
   }}
 ]
 EOF
+elif [ "$1" = "package" ] && [ "$2" = "-json-output" ]; then
+  output_file=$3
+  cat <<EOF > "$output_file"
+[
+  {{
+    "name": "fuchsia/tools/mock_tool/\${{platform}}",
+    "path": "{}/prebuilt/tools/mock_tool",
+    "version": "$version",
+    "platforms": [
+      "linux-amd64"
+    ]
+  }}
+]
+EOF
 fi
 "#,
+        fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
@@ -106,6 +128,52 @@ fi
     );
     fs::write(&jiri_path, jiri_script).unwrap();
     make_executable(&jiri_path);
+
+    // Create mock cipd
+    let cipd_path = jiri_dir.join("cipd");
+    let cipd_script = r#"#!/bin/bash
+# Mock cipd ensure
+
+root_dir=""
+ensure_file=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -root)
+      root_dir="$2"
+      shift 2
+      ;;
+    -ensure-file)
+      ensure_file="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -n "$root_dir" ] && [ -n "$ensure_file" ]; then
+  current_subdir=""
+  while read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^# ]] && continue
+    [[ -z "$line" ]] && continue
+    
+    if [[ "$line" =~ ^@Subdir[[:space:]]+(.*) ]]; then
+      current_subdir="${BASH_REMATCH[1]}"
+    else
+      read -r pkg ver <<< "$line"
+      if [ -n "$current_subdir" ]; then
+        target_dir="$root_dir/$current_subdir"
+        mkdir -p "$target_dir"
+        echo "mock_content for $pkg $ver" > "$target_dir/file.txt"
+      fi
+    fi
+  done < "$ensure_file"
+fi
+"#;
+    fs::write(&cipd_path, cipd_script).unwrap();
+    make_executable(&cipd_path);
 
     // 3. Create mock fx
     let scripts_dir = fuchsia_path.join("scripts");
@@ -439,5 +507,42 @@ fn test_parent_jiri_update() {
 
     // Clean up
     free_environment_by_id(config, &env_info_2.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+
+#[test]
+fn test_prebuilt_isolation() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create environment
+    let env_id = create_environment(config, "mock_config").unwrap();
+
+    // 2. Allocate Workspace 1 (revision A)
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+
+    // Simulate that parent prebuilts are at version 1 initially
+    let parent_prebuilt_dir = env.config.fuchsia_dir.join("prebuilt/tools/mock_tool");
+    fs::create_dir_all(&parent_prebuilt_dir).unwrap();
+    fs::write(parent_prebuilt_dir.join("file.txt"), "mock_content fuchsia/tools/mock_tool/linux-amd64 version:1").unwrap();
+
+    // Verify Workspace 1 sees version 1 (currently it does, because it symlinks the whole prebuilt)
+    let ws_prebuilt_file = env_info.path.join("prebuilt/tools/mock_tool/file.txt");
+    assert_eq!(fs::read_to_string(&ws_prebuilt_file).unwrap(), "mock_content fuchsia/tools/mock_tool/linux-amd64 version:1");
+
+    // 3. Simulate parent update to revision B (which updates parent's prebuilts to version 2)
+    // We update the file in the parent's prebuilt
+    fs::write(parent_prebuilt_dir.join("file.txt"), "mock_content fuchsia/tools/mock_tool/linux-amd64 version:2").unwrap();
+
+    // Verify Workspace 1 STILL sees version 1 (isolation check)
+    // THIS WILL FAIL in current implementation because it symlinks the whole prebuilt,
+    // so it will see "version:2" instead of "version:1".
+    let content = fs::read_to_string(&ws_prebuilt_file).unwrap();
+    assert_eq!(content, "mock_content fuchsia/tools/mock_tool/linux-amd64 version:1", 
+               "Workspace 1 should be isolated from parent prebuilt updates");
+
+    // Clean up
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
     delete_environment(config, &env_id).unwrap();
 }
