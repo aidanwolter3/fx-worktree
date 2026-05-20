@@ -151,6 +151,10 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
         )
         .with_context(|| "Failed to add root git worktree")?;
         crate::utils::convert_gitdir_to_symlink(workspace_path)?;
+        let common_git = config.fuchsia_dir.join(".git");
+        crate::utils::exclude_from_git(&common_git, ".fx-worktree-completed")?;
+        crate::utils::exclude_from_git(&common_git, ".fx-build-dir")?;
+        crate::utils::exclude_from_git(&common_git, ".fx-root")?;
     } else {
         return Err(anyhow!("Root project not found in Jiri projects"));
     }

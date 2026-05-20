@@ -330,3 +330,26 @@ fn clamp_mtimes_recursive(dir: &Path, time: SystemTime) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn exclude_from_git(gitdir: &Path, pattern: &str) -> Result<()> {
+    let exclude_file = gitdir.join("info/exclude");
+    if let Some(parent) = exclude_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut content = if exclude_file.exists() {
+        fs::read_to_string(&exclude_file)?
+    } else {
+        String::new()
+    };
+
+    if !content.lines().any(|l| l.trim() == pattern) {
+        if !content.ends_with('\n') && !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(pattern);
+        content.push('\n');
+        fs::write(&exclude_file, content)?;
+        log::info!("Added {} to {:?}", pattern, exclude_file);
+    }
+    Ok(())
+}
