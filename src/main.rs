@@ -110,6 +110,9 @@ fn main() -> Result<()> {
         Commands::Release { id } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
+            if !cli.json {
+                eprintln!("Resetting worktree {}...", id);
+            }
             release::release_worktree_by_id(&config, &id)?;
             if cli.json {
                 println!("{{\"released\":true,\"environment_id\":\"{}\"}}", id);
