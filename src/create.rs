@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -143,7 +143,7 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
             &[],
         )
         .with_context(|| "Failed to add root git worktree")?;
-        convert_gitdir_to_symlink(workspace_path)?;
+        crate::utils::convert_gitdir_to_symlink(workspace_path)?;
     } else {
         return Err(anyhow!("Root project not found in Jiri projects"));
     }
@@ -198,7 +198,7 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
                 &[],
             )
             .with_context(|| format!("Failed to add git worktree for {}", project.name))?;
-            convert_gitdir_to_symlink(&target_path)?;
+            crate::utils::convert_gitdir_to_symlink(&target_path)?;
 
             Ok(())
         })?;
@@ -206,16 +206,10 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
 
     // 4. Isolate Toolchains (Symlink prebuilts & copy generated files)
     println!("Isolating toolchains...");
-    let base_jiri_root = config.fuchsia_dir.join(".jiri_root");
-    let workspace_jiri_root = workspace_path.join(".jiri_root");
-    std::os::unix::fs::symlink(&base_jiri_root, &workspace_jiri_root).with_context(|| {
-        format!("Failed to symlink {:?} to {:?}", base_jiri_root, workspace_jiri_root)
-    })?;
 
-    let base_prebuilt = config.fuchsia_dir.join("prebuilt");
     let workspace_prebuilt = workspace_path.join("prebuilt");
-    std::os::unix::fs::symlink(&base_prebuilt, &workspace_prebuilt).with_context(|| {
-        format!("Failed to symlink {:?} to {:?}", base_prebuilt, workspace_prebuilt)
+    fs::create_dir_all(&workspace_prebuilt).with_context(|| {
+        format!("Failed to create prebuilt directory {:?}", workspace_prebuilt)
     })?;
 
     // Copy Jiri generated files
@@ -224,20 +218,4 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn convert_gitdir_to_symlink(repo_path: &Path) -> Result<()> {
-    let git_file_path = repo_path.join(".git");
-    if git_file_path.exists() && git_file_path.is_file() {
-        let contents = fs::read_to_string(&git_file_path)
-            .with_context(|| format!("Failed to read {:?}", git_file_path))?;
-        if let Some(gitdir_line) = contents.lines().next() {
-            if let Some(gitdir_path_str) = gitdir_line.strip_prefix("gitdir: ") {
-                let gitdir_path = PathBuf::from(gitdir_path_str.trim());
-                fs::remove_file(&git_file_path)
-                    .with_context(|| format!("Failed to delete {:?}", git_file_path))?;
-                std::os::unix::fs::symlink(&gitdir_path, &git_file_path)
-                    .with_context(|| format!("Failed to symlink {:?} to {:?}", gitdir_path, git_file_path))?;
-            }
-        }
-    }
-    Ok(())
-}
+

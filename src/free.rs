@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::utils::{find_worktrees, clean_worktree, get_file_mtime, set_file_mtime};
+use crate::utils::{find_worktrees, clean_worktree, get_file_mtime, set_file_mtime, copy_file_if_different};
 use crate::environment::EnvironmentInfo;
 use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
@@ -55,13 +55,20 @@ pub fn free_environment_internal(env_info: &EnvironmentInfo) -> Result<()> {
     }
 
     // 2. Restore args.gn in the build directory
+    // We use copy_file_if_different instead of a standard copy to ensure that if the args.gn
+    // contents haven't changed, we do not update its modification time.
+    //
+    // If we update its mtime on every free/use cycle, Ninja will detect args.gn as newer than
+    // the build.ninja.stamp (which was generated during the previous compile), causing GN
+    // to regenerate build files on the next compile, which in turn dirties generated Bazel
+    // workspace files (e.g., BUILD.bazel mappings) and breaks no-op builds.
     let out_dir = env_info.path.join("out/default");
     if out_dir.exists() {
         let args_gn_ref = out_dir.join("args.gn.ref");
         let args_gn = out_dir.join("args.gn");
         if args_gn_ref.exists() {
             log::info!("Restoring args.gn from args.gn.ref");
-            fs::copy(&args_gn_ref, &args_gn).with_context(|| {
+            copy_file_if_different(&args_gn_ref, &args_gn).with_context(|| {
                 format!("Failed to copy {:?} to {:?}", args_gn_ref, args_gn)
             })?;
         }

@@ -72,6 +72,12 @@ fn setup_mock_env() -> TestEnv {
     run_setup_cmd("git", &["add", "sub_dummy.txt"], &sub_path);
     run_setup_cmd("git", &["commit", "-m", "sub initial commit"], &sub_path);
 
+    // Create mock Jiri update history and config
+    let update_history_dir = fuchsia_path.join(".jiri_root/update_history");
+    fs::create_dir_all(&update_history_dir).unwrap();
+    fs::write(update_history_dir.join("latest"), "<manifest></manifest>").unwrap();
+    fs::write(fuchsia_path.join(".jiri_root/config"), "<config></config>").unwrap();
+
     // 2. Create mock jiri
     let jiri_dir = fuchsia_path.join(".jiri_root/bin");
     fs::create_dir_all(&jiri_dir).unwrap();
@@ -110,7 +116,15 @@ elif [ "$1" = "package" ] && [ "$2" = "-json-output" ]; then
 [
   {{
     "name": "fuchsia/tools/mock_tool/\${{platform}}",
-    "path": "{}/prebuilt/tools/mock_tool",
+    "path": "$cwd/prebuilt/tools/mock_tool",
+    "version": "$version",
+    "platforms": [
+      "linux-amd64"
+    ]
+  }},
+  {{
+    "name": "infra/3pp/tools/bazel/\${{platform}}",
+    "path": "$cwd/prebuilt/third_party/bazel/linux-x64",
     "version": "$version",
     "platforms": [
       "linux-amd64"
@@ -120,7 +134,6 @@ elif [ "$1" = "package" ] && [ "$2" = "-json-output" ]; then
 EOF
 fi
 "#,
-        fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
@@ -208,8 +221,34 @@ fi
     fs::write(&fx_path, fx_script).unwrap();
     make_executable(&fx_path);
 
-    // Commit only dummy.txt and scripts/fx
-    run_setup_cmd("git", &["add", "dummy.txt", "scripts/fx"], fuchsia_path);
+    // Create mock wheel extraction scripts
+    let tools_scripts_dir = fuchsia_path.join("tools/build/scripts");
+    fs::create_dir_all(&tools_scripts_dir).unwrap();
+    
+    let mock_extract_script = r#"#!/bin/bash
+mkdir -p prebuilt/third_party/pydantic-core/pydantic_core
+touch prebuilt/third_party/pydantic-core/pydantic_core/__init__.py
+mkdir -p prebuilt/third_party/protobuf-py3/protobuf
+touch prebuilt/third_party/protobuf-py3/protobuf/__init__.py
+echo "mock extraction done"
+"#;
+    
+    let pydantic_script = tools_scripts_dir.join("extract_pydantic_core_wheel.sh");
+    fs::write(&pydantic_script, mock_extract_script).unwrap();
+    make_executable(&pydantic_script);
+    
+    let protobuf_script = tools_scripts_dir.join("extract_protobuf_py3_wheel.sh");
+    fs::write(&protobuf_script, mock_extract_script).unwrap();
+    make_executable(&protobuf_script);
+
+    // Commit only dummy.txt, scripts/fx and tools/build/scripts/extract_*.sh
+    run_setup_cmd("git", &[
+        "add", 
+        "dummy.txt", 
+        "scripts/fx", 
+        "tools/build/scripts/extract_pydantic_core_wheel.sh", 
+        "tools/build/scripts/extract_protobuf_py3_wheel.sh"
+    ], fuchsia_path);
     run_setup_cmd("git", &["commit", "-m", "initial commit with mocks"], fuchsia_path);
 
     unsafe {
@@ -522,27 +561,273 @@ fn test_prebuilt_isolation() {
     // 2. Allocate Workspace 1 (revision A)
     let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
 
-    // Simulate that parent prebuilts are at version 1 initially
-    let parent_prebuilt_dir = env.config.fuchsia_dir.join("prebuilt/tools/mock_tool");
-    fs::create_dir_all(&parent_prebuilt_dir).unwrap();
-    fs::write(parent_prebuilt_dir.join("file.txt"), "mock_content fuchsia/tools/mock_tool/linux-amd64 version:1").unwrap();
-
-    // Verify Workspace 1 sees version 1 (currently it does, because it symlinks the whole prebuilt)
+    // Verify Workspace 1 sees version 1 (from mock cipd)
     let ws_prebuilt_file = env_info.path.join("prebuilt/tools/mock_tool/file.txt");
-    assert_eq!(fs::read_to_string(&ws_prebuilt_file).unwrap(), "mock_content fuchsia/tools/mock_tool/linux-amd64 version:1");
+    assert_eq!(
+        fs::read_to_string(&ws_prebuilt_file).unwrap(),
+        "mock_content for fuchsia/tools/mock_tool/linux-amd64 version:1\n"
+    );
 
     // 3. Simulate parent update to revision B (which updates parent's prebuilts to version 2)
-    // We update the file in the parent's prebuilt
-    fs::write(parent_prebuilt_dir.join("file.txt"), "mock_content fuchsia/tools/mock_tool/linux-amd64 version:2").unwrap();
+    // In our mock, revision B is triggered by committing a change with message "bump root"
+    // We modify dummy.txt in parent and commit it.
+    let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
+    fs::write(&parent_dummy, "hello v2").unwrap();
+    run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
+    run_setup_cmd("git", &["commit", "-m", "bump root"], &env.config.fuchsia_dir);
+
+    // Also manually write to parent's prebuilt to simulate that parent's jiri update
+    // would have updated it on disk.
+    let parent_prebuilt_dir = env.config.fuchsia_dir.join("prebuilt/tools/mock_tool");
+    fs::create_dir_all(&parent_prebuilt_dir).unwrap();
+    fs::write(parent_prebuilt_dir.join("file.txt"), "mock_content parent version:2").unwrap();
 
     // Verify Workspace 1 STILL sees version 1 (isolation check)
-    // THIS WILL FAIL in current implementation because it symlinks the whole prebuilt,
-    // so it will see "version:2" instead of "version:1".
     let content = fs::read_to_string(&ws_prebuilt_file).unwrap();
-    assert_eq!(content, "mock_content fuchsia/tools/mock_tool/linux-amd64 version:1", 
-               "Workspace 1 should be isolated from parent prebuilt updates");
+    assert_eq!(
+        content,
+        "mock_content for fuchsia/tools/mock_tool/linux-amd64 version:1\n",
+        "Workspace 1 should be isolated from parent prebuilt updates"
+    );
+
+    // 4. Free Workspace 1
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+
+    // 5. Allocate Workspace 2 (uses same slot, now at revision B ➔ version 2)
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true).unwrap();
+    assert_eq!(env_info_2.environment_id, env_id, "Should reuse the same environment slot");
+
+    // Verify Workspace 2 gets version 2 (from mock cipd)
+    let ws2_prebuilt_file = env_info_2.path.join("prebuilt/tools/mock_tool/file.txt");
+    assert_eq!(
+        fs::read_to_string(&ws2_prebuilt_file).unwrap(),
+        "mock_content for fuchsia/tools/mock_tool/linux-amd64 version:2\n"
+    );
+
+    // Clean up
+    free_environment_by_id(config, &env_info_2.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+
+#[test]
+fn test_wheel_extraction_mtime_preservation() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    use fxenv::utils::{get_file_mtime, set_file_mtime};
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create a persistent environment
+    let env_id = create_environment(config, "mock_config").unwrap();
+
+    // 2. Allocate Workspace (first run)
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let workspace_path = env_info.path;
+
+    let pydantic_init = workspace_path.join("prebuilt/third_party/pydantic-core/pydantic_core/__init__.py");
+    assert!(pydantic_init.exists(), "pydantic_core/__init__.py should be extracted");
+    let t1 = get_file_mtime(&pydantic_init).unwrap();
+
+    // Simulate a build by creating the output file with a newer mtime
+    let output_file = workspace_path.join("out/default/host_x64/gen/prebuilt/third_party/pydantic-core/pydantic_core/__init__.py");
+    fs::create_dir_all(output_file.parent().unwrap()).unwrap();
+    fs::write(&output_file, "mock_output").unwrap();
+
+    // Ensure output mtime is strictly newer than t1
+    let t2 = t1 + std::time::Duration::from_secs(2);
+    set_file_mtime(&output_file, t2).unwrap();
+
+    // 3. Free Workspace
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+
+    // Wait a bit to ensure 'now' (if the script runs again) would be newer than t2
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // 4. Allocate Workspace again (re-use)
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    assert_eq!(env_info_2.environment_id, env_id);
+
+    // Check mtime of the input file after re-use
+    let t3 = get_file_mtime(&pydantic_init).unwrap();
+
+    // With the fix, t3 should be equal to t1 (not updated to now).
+    // So the output (t2) is still newer than the input (t3).
+    // If it failed (re-extracted), t3 would be 'now' (> t2), dirtying the build.
+    assert_eq!(t3, t1, "pydantic_core/__init__.py mtime should be preserved on reuse");
+    assert!(t2 > t3, "Build output should remain newer than input");
+
+    // Clean up
+    free_environment_by_id(config, &env_info_2.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+
+#[test]
+fn test_jiri_latest_snapshot_isolation() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    use fxenv::utils::{get_file_mtime, set_file_mtime};
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create and allocate workspace
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let workspace_path = env_info.path;
+
+    let ws_latest = workspace_path.join(".jiri_root/update_history/latest");
+    assert!(ws_latest.exists(), "latest snapshot should be copied to workspace");
+    let t1 = get_file_mtime(&ws_latest).unwrap();
+
+    // 2. Simulate a parent jiri update by touching the parent's latest snapshot file
+    let parent_latest = config.fuchsia_dir.join(".jiri_root/update_history/latest");
+    
+    // Wait a bit to ensure the new mtime is different
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    
+    let new_time = std::time::SystemTime::now();
+    set_file_mtime(&parent_latest, new_time).unwrap();
+
+    // 3. Verify workspace latest snapshot mtime did NOT change (isolated)
+    let t2 = get_file_mtime(&ws_latest).unwrap();
+    assert_eq!(t2, t1, "Workspace latest snapshot mtime should be isolated from parent updates");
 
     // Clean up
     free_environment_by_id(config, &env_info.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+
+#[test]
+fn test_existing_cache_clamping_migration() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    use fxenv::utils::{get_file_mtime, set_file_mtime};
+    use fxenv::allocate::{JiriPackage, calculate_group_hash};
+    
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    let shared_prebuilts_dir = config.fxenv_root.join("shared-prebuilts");
+    
+    let pkgs = vec![
+        JiriPackage {
+            name: "fuchsia/tools/mock_tool/linux-amd64".to_string(),
+            path: "prebuilt/tools/mock_tool".to_string(),
+            version: "version:1".to_string(),
+            platforms: Some(vec!["linux-amd64".to_string()]),
+        }
+    ];
+    let hash = calculate_group_hash(&pkgs);
+    let escaped_path = "prebuilt_tools_mock_tool";
+    let cache_subdir = format!("merged/{}/{}", escaped_path, hash);
+    let shared_pkg_dir = shared_prebuilts_dir.join(&cache_subdir);
+    
+    fs::create_dir_all(&shared_pkg_dir).unwrap();
+    
+    // Create .versions directory to simulate successful CIPD installation (cache hit)
+    fs::create_dir_all(shared_pkg_dir.join(".versions")).unwrap();
+    
+    // Create a file with 2042 mtime
+    let file_2042 = shared_pkg_dir.join("file_2042.txt");
+    fs::write(&file_2042, "mock content").unwrap();
+    
+    let future_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2290204800); // 2042-07-28
+    set_file_mtime(&file_2042, future_time).unwrap();
+    
+    // 2. Allocate workspace (this will be a cache hit)
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let workspace_path = env_info.path;
+    
+    let ws_file = workspace_path.join("prebuilt/tools/mock_tool/file_2042.txt");
+    assert!(ws_file.exists());
+    
+    let mtime = get_file_mtime(&ws_file).unwrap();
+    
+    // With the old code, mtime will still be 2042.
+    // With the fix, mtime will be clamped to 2020-01-01.
+    let expected_clamp_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1577836800); // 2020-01-01
+    assert_eq!(mtime, expected_clamp_time, "Existing cache files should be clamped on allocation");
+    
+    // Clean up
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+
+#[test]
+fn test_args_gn_mtime_preservation_on_free() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    use fxenv::utils::{get_file_mtime, set_file_mtime};
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Allocate workspace
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let workspace_path = env_info.path;
+
+    let args_gn = workspace_path.join("out/default/args.gn");
+    assert!(args_gn.exists());
+    
+    // Set a known mtime on args.gn and args.gn.ref
+    let t1 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+    set_file_mtime(&args_gn, t1).unwrap();
+    
+    let args_gn_ref = workspace_path.join("out/default/args.gn.ref");
+    fs::write(&args_gn_ref, fs::read_to_string(&args_gn).unwrap()).unwrap(); // ensure contents are identical
+    set_file_mtime(&args_gn_ref, t1).unwrap();
+
+    // 2. Free workspace
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+
+    // 3. Verify args.gn mtime did NOT change
+    let t2 = get_file_mtime(&args_gn).unwrap();
+    assert_eq!(t2, t1, "args.gn mtime should be preserved on free if not modified");
+
+    // Clean up
+    delete_environment(config, &env_id).unwrap();
+}
+
+#[test]
+fn test_bazel_package_copying() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    use fxenv::utils::get_file_mtime;
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Allocate workspace
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let workspace_path = env_info.path;
+
+    // 2. Verify mock_tool is symlinked
+    let ws_mock_tool = workspace_path.join("prebuilt/tools/mock_tool");
+    assert!(ws_mock_tool.exists());
+    assert!(ws_mock_tool.is_symlink(), "mock_tool should be symlinked");
+
+    // 3. Verify Bazel package is copied (not symlinked)
+    let ws_bazel = workspace_path.join("prebuilt/third_party/bazel/linux-x64");
+    assert!(ws_bazel.exists());
+    assert!(!ws_bazel.is_symlink(), "Bazel package should be a real directory (copied)");
+    assert!(ws_bazel.join("file.txt").exists(), "Bazel package contents should be copied");
+    
+    let version_marker = ws_bazel.join(".fxenv_source_cache");
+    assert!(version_marker.exists(), "Version marker should be written in workspace copy");
+
+    let t1 = get_file_mtime(&ws_bazel.join("file.txt")).unwrap();
+
+    // 4. Free workspace
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+
+    // Wait a bit
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // 5. Allocate again (re-use)
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    assert_eq!(env_info_2.environment_id, env_id);
+
+    // Verify Bazel was NOT re-copied (mtime preserved)
+    let ws_bazel2 = env_info_2.path.join("prebuilt/third_party/bazel/linux-x64");
+    let t2 = get_file_mtime(&ws_bazel2.join("file.txt")).unwrap();
+    assert_eq!(t2, t1, "Bazel package should not be re-copied if version is unchanged");
+
+    // Clean up
+    free_environment_by_id(config, &env_info_2.environment_id).unwrap();
     delete_environment(config, &env_id).unwrap();
 }

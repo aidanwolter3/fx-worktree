@@ -6,7 +6,7 @@ description: >-
 tags: [fuchsia, workspace, build, RBE, cache, worktree]
 support_tier: primary
 category: infrastructure
-version: 1.0.0
+version: 1.1.0
 ---
 
 # `fxenv` (Fuchsia Environment Manager)
@@ -23,96 +23,75 @@ Use `fxenv` when:
 
 ## CLI Commands
 
-### 1. Build Directory (Outdir) Management
+### 1. Environment Pool Management
+These commands manage the pool of persistent environments. The build directories reside physically under `~/fuchsia/out/fxenv/<config_name>_<uuid>`.
 
-Manages the shared pool of build directories. These directories reside physically under `~/fuchsia/out/fxenv/<config_name>/out_<uuid>`.
-
-*   **Create an Outdir**:
+*   **Create an Environment**:
     ```bash
-    fxenv outdir create <config_name>
+    fxenv create <config_name>
     ```
-    Creates a new build configuration inside the pool (runs `fx set`). E.g.:
+    Creates a new build environment inside the pool (runs `fx set` and performs an initial build). E.g.:
     ```bash
-    fxenv outdir create fuchsia.x64
-    ```
-
-*   **List Outdirs**:
-    ```bash
-    fxenv outdir list
-    ```
-    Lists all outdirs in the pool and whether they are currently "In Use" (leased) or "Free".
-
-*   **Delete an Outdir**:
-    ```bash
-    fxenv outdir delete <outdir_id>
-    ```
-    Deletes the specified outdir from the pool (cannot delete if currently leased).
-
-### 2. Workspace (Worktree) Management
-
-Allocates and frees isolated development environments.
-
-*   **Allocate a Workspace**:
-    ```bash
-    fxenv worktree create <config_name> [--agent-id <agent_name>]
-    ```
-    Leases a free outdir from the pool and creates an isolated git worktree mapped to it. 
-    Returns a JSON string containing the workspace details:
-    ```json
-    {
-      "worktree_id": "fuchsia.x64_out_uuid",
-      "workspace_path": "/home/user/.fuchsia-agents/workspaces/fuchsia.x64_out_uuid",
-      "outdir_path": "/home/user/fuchsia/out/fxenv/fuchsia.x64/out_uuid",
-      "agent_id": "my_agent",
-      "config": "fuchsia.x64",
-      "pid": 12345,
-      "timestamp_sec": 1779213509
-    }
+    fxenv create fuchsia_internal.x64
     ```
 
-*   **Free a Workspace**:
+*   **Delete an Environment**:
     ```bash
-    fxenv worktree delete <worktree_id>
+    fxenv delete <env_id>
+    ```
+    Deletes the specified environment from the pool (cannot delete if currently leased).
+
+*   **List Environments**:
+    ```bash
+    fxenv list
+    ```
+    Lists all environments in the pool, their IDs, and whether they are currently "In Use" (leased) or "Free".
+
+### 2. Allocation & Lifecycle
+*   **Use (Allocate) an Environment**:
+    ```bash
+    fxenv use <config_name> [--agent-id <agent_name>]
+    ```
+    Leases a free environment from the pool matching the config and creates an isolated git worktree mapped to it. 
+    Prints allocation details (path, agent ID, etc.) and runs `fx gen`.
+
+*   **Free (Release) an Environment**:
+    ```bash
+    fxenv free <env_id>
     ```
     Cleans up the git worktree and **moves the build directory back to the pool**, preserving the build cache.
 
-*   **List Workspaces**:
+*   **Locate Environment Path**:
     ```bash
-    fxenv worktree list
+    fxenv locate [<env_id>]
     ```
-    Lists all currently active workspaces and their leases.
+    Prints the absolute path of the workspace directory for the environment.
+
+*   **Change Directory**:
+    ```bash
+    fxenv cd [<env_id>]
+    ```
+    Helper to navigate to the workspace directory (requires shell wrapper configuration).
+
+### 3. Verification & Maintenance
+*   **Run Automated Self-Test**:
+    ```bash
+    fxenv self-test [--use-env <env_id>]
+    ```
+    Runs a full programmatic verification of the `fxenv` lifecycle (warming, allocation, incremental compiles, cache preservation, and cleanup).
 
 *   **Garbage Collection**:
     ```bash
-    fxenv worktree gc [--timeout <seconds>]
+    fxenv gc [--timeout <seconds>]
     ```
-    Finds and cleans up orphaned workspaces where the owning process (recorded PID) has died, or the lease has expired (default timeout: 2 hours).
+    Finds and cleans up orphaned environments where the owning process (recorded PID) has died, or the lease has expired (default: cleans all orphaned leases).
 
-### 3. Self-Test Verification
-
-Runs a full programmatic verification of the `fxenv` lifecycle (warming, allocation, incremental compiles, cache preservation, and cleanup).
-
-*   **Run Automated Self-Test**:
-    ```bash
-    fxenv self-test
-    ```
-
-*   **Reuse Existing Build Cache**:
-    ```bash
-    fxenv self-test --use-outdir <id|path>
-    ```
-    Runs the self-test reusing an existing build directory (either by ID inside the pool, or an absolute path to a standard build directory like `~/fuchsia/out/fuchsia_internal.arm64-balanced`). This skips the slow warming build phase and restores both the build cache (`.o` files) and `build.ninja` configuration at the end.
-
-### 4. Shell Completions
-
-*   **Generate Completions**:
+*   **Generate Shell Completions**:
     ```bash
     fxenv completions <bash|elvish|fish|powershell|zsh>
     ```
-    Prints the shell completion script to stdout. E.g. for Zsh:
-    ```bash
-    fxenv completions zsh > ~/.zsh/completion/_fxenv
-    ```
+
+---
 
 ## Technical Design & Constraints
 
@@ -120,11 +99,28 @@ Runs a full programmatic verification of the `fxenv` lifecycle (warming, allocat
 Fuchsia's RBE compiler wrappers require the build directory to be a subdirectory of the execution root (the workspace). 
 To support RBE:
 *   **During Allocation**: `fxenv` physically **moves (renames)** the leased outdir into the workspace (`workspace_path/out/default`). Relative symlinks inside `gen/` resolve correctly, and RBE builds succeed.
-*   **During Free**: The outdir is moved back to the pool (`out/fxenv/`).
-*   **Performance**: Since the workspaces (defaults to `~/.fuchsia-agents/workspaces`) and the Fuchsia checkout are typically on the same filesystem, this move is instantaneous.
+*   **During Free**: The outdir is moved back to the pool (`~/fuchsia/out/fxenv/`).
+*   **Performance**: Since the workspaces (defaults to `~/.fuchsia-agents/environments/`) and the Fuchsia checkout are on the same filesystem, this move is instantaneous.
 
-### 2. Topology
+### 2. Prebuilt Isolation & Shared Cache
+Fuchsia checkouts contain hundreds of prebuilt packages (toolchains, SDKs, firmware) managed by Jiri and CIPD. Sharing the parent's `prebuilt/` directory causes workspaces to dirty each other's builds when the parent updates.
+
+To isolate them while retaining cache sharing:
+*   **Querying**: `fxenv` queries the required packages for the workspace's revision using `jiri package` in the workspace.
+*   **Grouping**: Packages are grouped by their target path. This is critical because Jiri allows multiple packages to overlap in the same destination (e.g., Rust host compiler and target libraries both install to `prebuilt/third_party/rust/linux-x64`).
+*   **Shared Cache**: Packages are installed into a central cache at `~/.fuchsia-agents/shared-prebuilts/merged/<target_path_escaped>/<hash>/`. The hash is a SipHash of the sorted package names and versions in the group, ensuring different workspaces on the same revision share the exact same merged directories.
+*   **Mtime Clamping**: Some prebuilt packages contain files with artificial modification times in the far future (e.g., Bazel uses `2042-07-28` for determinism). Since Ninja tracks these as dynamic inputs (recorded in `.ninja_deps`), they always trigger rebuilds because today's build outputs are older than `2042`. To fix this, `fxenv` recursively clamps the modification times of all files in newly downloaded cache directories to a fixed past date (`2020-01-01 00:00:00 UTC`), preserving build cache no-ops.
+*   **Symlinking**: Individual package target directories in the workspace are symlinked to their corresponding directory in the shared cache.
+*   **Wheel Extraction**: Some dependencies (like `pydantic-core` and `protobuf-py3`) are distributed as CIPD wheel packages but extracted into the source tree by Jiri hooks. Since we isolate `prebuilt/` and avoid Jiri's slow `run-hooks` (which triggers network fetches), `fxenv` manually runs the local wheel extraction scripts (`extract_pydantic_core_wheel.sh` and `extract_protobuf_py3_wheel.sh`) during allocation to extract them locally in the workspace.
+
+### 3. Jiri Metadata in Git Worktrees
+Jiri stores project metadata (remote URL, branch) inside `.git/jiri/`. Because `git worktree add` creates a new Git directory under the parent's `.git/worktrees/<name>`, it lacks this Jiri metadata. Without it, `jiri` commands run in the workspace (such as `jiri package` to resolve prebuilts) fail to recognize projects as local and attempt to clone them from the network, causing severe performance hits.
+
+To resolve this, `fxenv` automatically symlinks the parent project's Jiri metadata directory (`.git/jiri`) into the worktree's Git directory (`.git/worktrees/<name>/jiri`) during setup/allocation. This makes `jiri` offline-friendly and extremely fast (completes in 1 second).
+
+### 4. Topology
 *   **Global Config Directory**: `~/.fuchsia-agents/`
-    *   `leases/`: Active lease files (`<config>_<uuid>.lease`).
-    *   `workspaces/`: Parent directory for active git worktrees.
+    *   `leases/`: Active lease files (`<env_id>.lease`).
+    *   `environments/`: Parent directory for active isolated workspaces.
+    *   `shared-prebuilts/`: Central CIPD cache with merged subdirectories.
 *   **Build Directory Pool**: `~/fuchsia/out/fxenv/`
