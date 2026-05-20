@@ -855,7 +855,7 @@ fn test_nosync_and_sync() {
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello");
 
     // 4. Run sync
-    fxenv::sync::sync_environment(config, &env_info.environment_id, &env_info.path, true).unwrap();
+    fxenv::sync::sync_environment_by_id(config, &env_info.environment_id, true).unwrap();
 
     // Verify that workspace dummy.txt is now "hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
@@ -864,4 +864,24 @@ fn test_nosync_and_sync() {
     free_environment_by_id(config, &env_info.environment_id).unwrap();
     delete_environment(config, &env_id).unwrap();
 }
+
+#[test]
+fn test_invalid_id_validation() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // Test locate_path with invalid IDs
+    assert!(fxenv::locate::locate_path(config, Some("../invalid".to_string())).is_err());
+    assert!(fxenv::locate::locate_path(config, Some("/absolute/path".to_string())).is_err());
+
+    // Test delete_environment with invalid IDs
+    assert!(delete_environment(config, "../invalid").is_err());
+    assert!(delete_environment(config, "/absolute/path").is_err());
+
+    // Test free_environment_by_id with invalid IDs
+    assert!(free_environment_by_id(config, "../invalid").is_err());
+    assert!(free_environment_by_id(config, "/absolute/path").is_err());
+}
+
 
