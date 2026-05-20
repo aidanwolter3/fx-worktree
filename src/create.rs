@@ -36,6 +36,13 @@ pub fn create_environment(config: &Config, config_name: &str) -> Result<String> 
         return Err(e);
     }
 
+    // Run sync to get prebuilts and ensure correct revisions (required for fx set)
+    if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, false) {
+        cleanup();
+        return Err(e);
+    }
+
+
     // 2. Create physical out/default
     let out_dir = env_path.join("out/default");
     fs::create_dir_all(&out_dir)
