@@ -51,6 +51,17 @@ fn setup_mock_env() -> TestEnv {
     let dummy_file = fuchsia_path.join("dummy.txt");
     fs::write(&dummy_file, "hello").unwrap();
 
+    // Create untracked metadata files in mock fuchsia repo
+    let ctf_dir = fuchsia_path.join("sdk/ctf/build/internal");
+    fs::create_dir_all(&ctf_dir).unwrap();
+    fs::write(ctf_dir.join("ctf_releases.gni"), "ctf_releases = []").unwrap();
+
+    let build_info_dir = fuchsia_path.join("build/info/jiri_generated");
+    fs::create_dir_all(&build_info_dir).unwrap();
+    fs::write(build_info_dir.join("commit_info"), "some info").unwrap();
+
+    fs::write(fuchsia_path.join("build/cipd.gni"), "cipd = []").unwrap();
+
     // 2. Create mock jiri
     let jiri_dir = fuchsia_path.join(".jiri_root/bin");
     fs::create_dir_all(&jiri_dir).unwrap();
@@ -301,3 +312,71 @@ fn test_self_test_command() {
     // Run self-test
     run_self_test(config, None).unwrap();
 }
+
+#[test]
+fn test_mtime_and_metadata_preservation() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create environment
+    let env_id = create_environment(config, "mock_config").unwrap();
+    let env_path = config.environments_dir().join(&env_id);
+
+    // Verify metadata files were copied during create
+    assert!(env_path.join("sdk/ctf/build/internal/ctf_releases.gni").exists());
+    assert!(env_path.join("build/info/jiri_generated/commit_info").exists());
+    assert!(env_path.join("build/cipd.gni").exists());
+
+    // 2. Allocate
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    
+    // Verify index exists
+    let index_path = env_info.path.join(".git/index");
+    assert!(index_path.exists());
+
+    // Record mtime of index and a source file
+    let index_mtime_before = fs::metadata(&index_path).unwrap().modified().unwrap();
+    
+    // We need a tracked file to check. dummy.txt is tracked.
+    let dummy_path = env_info.path.join("dummy.txt");
+    let dummy_mtime_before = fs::metadata(&dummy_path).unwrap().modified().unwrap();
+
+    // Sleep a bit to ensure time moves forward
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // 3. Free
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+
+    // Verify metadata files STILL exist (not deleted by clean)
+    assert!(env_path.join("sdk/ctf/build/internal/ctf_releases.gni").exists());
+    assert!(env_path.join("build/info/jiri_generated/commit_info").exists());
+    assert!(env_path.join("build/cipd.gni").exists());
+
+    // Verify index mtime is preserved
+    let index_mtime_after_free = fs::metadata(&index_path).unwrap().modified().unwrap();
+    assert_eq!(index_mtime_before, index_mtime_after_free, "Index mtime should be preserved after free");
+
+    // Verify dummy.txt mtime is preserved
+    let dummy_mtime_after_free = fs::metadata(&dummy_path).unwrap().modified().unwrap();
+    assert_eq!(dummy_mtime_before, dummy_mtime_after_free, "dummy.txt mtime should be preserved after free");
+
+    // Sleep again
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // 4. Allocate again (no-op case)
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true).unwrap();
+
+    // Verify index mtime is preserved after no-op allocate
+    let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
+    assert_eq!(index_mtime_before, index_mtime_after_alloc, "Index mtime should be preserved after no-op allocate");
+
+    // Verify dummy.txt mtime is preserved
+    let dummy_mtime_after_alloc = fs::metadata(&dummy_path).unwrap().modified().unwrap();
+    assert_eq!(dummy_mtime_before, dummy_mtime_after_alloc, "dummy.txt mtime should be preserved after no-op allocate");
+
+    // Clean up
+    free_environment_by_id(config, &env_info_2.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+

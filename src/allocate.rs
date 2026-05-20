@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::utils::{copy_toolchain_metadata, run_command};
+use crate::utils::{copy_toolchain_metadata, run_command, clean_worktree, find_worktrees, get_file_mtime, set_file_mtime};
 use crate::environment::EnvironmentInfo;
 use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
@@ -127,6 +127,18 @@ pub fn allocate_environment(
 fn reuse_environment(config: &Config, env_info: &EnvironmentInfo, quiet: bool) -> Result<()> {
     let workspace_path = &env_info.path;
 
+    // Record index mtimes unconditionally at the very start, before any git commands run
+    let worktrees = find_worktrees(workspace_path)?;
+    let mut index_mtimes = Vec::new();
+    for wt in &worktrees {
+        let index_path = wt.join(".git/index");
+        if index_path.exists() {
+            if let Ok(mtime) = get_file_mtime(&index_path) {
+                index_mtimes.push((index_path, mtime));
+            }
+        }
+    }
+
     if !quiet {
         println!("Reusing existing environment {}...", env_info.environment_id);
     }
@@ -168,26 +180,37 @@ fn reuse_environment(config: &Config, env_info: &EnvironmentInfo, quiet: bool) -
         }
     }
 
+    // Check if it is a no-op (same revision and clean)
+    let is_noop = (|| -> Result<bool> {
+        if let Some(root) = &root_project {
+            // Check revision
+            let current_head = run_command("git", &["rev-parse", "HEAD"], workspace_path, &[])?;
+            let current_head_sha = String::from_utf8_lossy(&current_head.stdout).trim().to_string();
+            if current_head_sha != root.revision {
+                return Ok(false);
+            }
+
+            // Check clean
+            let status = run_command("git", &["status", "--porcelain", "-uno"], workspace_path, &[])?;
+            if !status.stdout.is_empty() {
+                return Ok(false);
+            }
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    })().unwrap_or(false);
+
+
+
+
     // 2. Clean and checkout root project (exclude out/ and markers)
     if let Some(root) = root_project {
         if !quiet {
             println!("Updating Git worktrees to target revisions...");
         }
-        run_command("git", &["reset", "--hard"], workspace_path, &[])?;
-        run_command(
-            "git",
-            &[
-                "clean",
-                "-fdx",
-                "-e", ".fxenv-completed",
-                "-e", "prebuilt",
-                "-e", ".jiri_root",
-                "-e", ".fx-build-dir",
-                "-e", "out", // Preserves build cache!
-            ],
-            workspace_path,
-            &[],
-        )?;
+        clean_worktree(workspace_path, true)?;
         run_command("git", &["checkout", &root.revision], workspace_path, &[])?;
     } else {
         return Err(anyhow!("Root project not found in Jiri projects"));
@@ -201,8 +224,7 @@ fn reuse_environment(config: &Config, env_info: &EnvironmentInfo, quiet: bool) -
         let target_path = workspace_path.join(rel_path);
 
         if target_path.exists() {
-            run_command("git", &["reset", "--hard"], &target_path, &[])?;
-            run_command("git", &["clean", "-fdx"], &target_path, &[])?;
+            clean_worktree(&target_path, false)?;
             run_command("git", &["checkout", &project.revision], &target_path, &[])?;
         } else {
             // New sub-project added to manifest: clone it fresh!
@@ -240,6 +262,15 @@ fn reuse_environment(config: &Config, env_info: &EnvironmentInfo, quiet: bool) -
 
     // Copy/restore toolchain metadata files deleted by git clean
     copy_toolchain_metadata(config, workspace_path)?;
+
+    // Restore index mtimes if no-op
+    if is_noop {
+        for (path, mtime) in index_mtimes {
+            if let Err(e) = set_file_mtime(&path, mtime) {
+                log::warn!("Failed to restore index mtime for {:?}: {:?}", path, e);
+            }
+        }
+    }
 
     // 4. Run fx gen to initialize workspace build files
     if !quiet {
