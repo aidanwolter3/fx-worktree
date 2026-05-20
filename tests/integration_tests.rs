@@ -62,6 +62,16 @@ fn setup_mock_env() -> TestEnv {
 
     fs::write(fuchsia_path.join("build/cipd.gni"), "cipd = []").unwrap();
 
+    // Create sub-project repo in fuchsia_dir
+    let sub_path = fuchsia_path.join("third_party/sub");
+    fs::create_dir_all(&sub_path).unwrap();
+    run_setup_cmd("git", &["init", "--initial-branch=main"], &sub_path);
+    run_setup_cmd("git", &["config", "user.name", "Test User"], &sub_path);
+    run_setup_cmd("git", &["config", "user.email", "test@example.com"], &sub_path);
+    fs::write(sub_path.join("sub_dummy.txt"), "sub hello").unwrap();
+    run_setup_cmd("git", &["add", "sub_dummy.txt"], &sub_path);
+    run_setup_cmd("git", &["commit", "-m", "sub initial commit"], &sub_path);
+
     // 2. Create mock jiri
     let jiri_dir = fuchsia_path.join(".jiri_root/bin");
     fs::create_dir_all(&jiri_dir).unwrap();
@@ -72,17 +82,25 @@ fn setup_mock_env() -> TestEnv {
 if [ "$1" = "project" ] && [ "$2" = "-json-output" ]; then
   output_file=$3
   revision=$(git -C "{}" rev-parse HEAD)
+  sub_revision=$(git -C "{}/third_party/sub" rev-parse HEAD)
   cat <<EOF > "$output_file"
 [
   {{
     "name": "mock_project",
     "path": "{}",
     "revision": "$revision"
+  }},
+  {{
+    "name": "sub_project",
+    "path": "{}/third_party/sub",
+    "revision": "$sub_revision"
   }}
 ]
 EOF
 fi
 "#,
+        fuchsia_path.to_str().unwrap(),
+        fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap()
     );
@@ -380,3 +398,46 @@ fn test_mtime_and_metadata_preservation() {
     delete_environment(config, &env_id).unwrap();
 }
 
+#[test]
+fn test_parent_jiri_update() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create environment
+    let env_id = create_environment(config, "mock_config").unwrap();
+
+    // 2. Allocate (first time, gets initial revisions)
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+
+    // Verify initial content
+    assert_eq!(fs::read_to_string(env_info.path.join("dummy.txt")).unwrap(), "hello");
+    assert_eq!(fs::read_to_string(env_info.path.join("third_party/sub/sub_dummy.txt")).unwrap(), "sub hello");
+
+    // 3. Free environment
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+
+    // 4. Update parent repo (simulate jiri update)
+    let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
+    fs::write(&parent_dummy, "hello v2").unwrap();
+    run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
+    run_setup_cmd("git", &["commit", "-m", "bump root"], &env.config.fuchsia_dir);
+
+    let parent_sub_path = env.config.fuchsia_dir.join("third_party/sub");
+    let parent_sub_dummy = parent_sub_path.join("sub_dummy.txt");
+    fs::write(&parent_sub_dummy, "sub hello v2").unwrap();
+    run_setup_cmd("git", &["add", "sub_dummy.txt"], &parent_sub_path);
+    run_setup_cmd("git", &["commit", "-m", "bump sub"], &parent_sub_path);
+
+    // 5. Allocate again (should reuse same slot but update revisions)
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true).unwrap();
+    assert_eq!(env_info_2.environment_id, env_id, "Should reuse the same environment slot");
+
+    // Verify updated content in workspace
+    assert_eq!(fs::read_to_string(env_info_2.path.join("dummy.txt")).unwrap(), "hello v2");
+    assert_eq!(fs::read_to_string(env_info_2.path.join("third_party/sub/sub_dummy.txt")).unwrap(), "sub hello v2");
+
+    // Clean up
+    free_environment_by_id(config, &env_info_2.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
