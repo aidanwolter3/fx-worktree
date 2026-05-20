@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::config::Config;
 use crate::lease::lease_environment;
-use crate::release::release_worktree_by_id;
+use crate::release::release_worktree;
 use crate::remove::remove_environment;
 use crate::utils::run_command;
 
@@ -205,7 +205,7 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     // 7. Cleanup
     println!("Cleaning up worktree lease...");
     if leased {
-        if let Err(e) = release_worktree_by_id(test_config, &env_id) {
+        if let Err(e) = release_worktree(test_config, &env_id) {
             log::error!("Failed to release worktree during cleanup: {:?}", e);
         }
     }

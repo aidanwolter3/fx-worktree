@@ -9,7 +9,7 @@ use fx_worktree::add::add_environment;
 use fx_worktree::config::Config;
 use fx_worktree::lease::lease_environment;
 use fx_worktree::list::list_environments;
-use fx_worktree::release::release_worktree_by_id;
+use fx_worktree::release::release_worktree;
 use fx_worktree::remove::remove_environment;
 use fx_worktree::selftest::run_self_test;
 
@@ -334,7 +334,7 @@ fn test_full_lifecycle() {
     );
 
     // 3. Test Worktree Release
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
     assert!(env_info.path.exists()); // Path must remain!
     assert!(env_info.path.join(".fx-worktree-completed").exists());
     assert!(!lease_file.exists()); // Lease must be deleted
@@ -405,7 +405,7 @@ fn test_git_symlink_conversion() {
     assert!(metadata.file_type().is_symlink());
 
     // 3. Free (keeps symlink)
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
     let metadata = fs::symlink_metadata(&git_file_path).unwrap();
     assert!(metadata.file_type().is_symlink());
 
@@ -478,7 +478,7 @@ fn test_mtime_and_metadata_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // 3. Free
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
 
     // Verify metadata files STILL exist (not deleted by clean)
     assert!(
@@ -528,7 +528,7 @@ fn test_mtime_and_metadata_preservation() {
     );
 
     // Clean up
-    release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_2.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -555,7 +555,7 @@ fn test_parent_jiri_update() {
     );
 
     // 3. Free environment
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
 
     // 4. Update parent repo (simulate jiri update)
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
@@ -591,7 +591,7 @@ fn test_parent_jiri_update() {
     );
 
     // Clean up
-    release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_2.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -644,7 +644,7 @@ fn test_prebuilt_isolation() {
     );
 
     // 4. Free Workspace 1
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
 
     // 5. Allocate Workspace 2 (uses same slot, now at revision B ➔ version 2)
     let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
@@ -661,7 +661,7 @@ fn test_prebuilt_isolation() {
     );
 
     // Clean up
-    release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_2.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -699,7 +699,7 @@ fn test_wheel_extraction_mtime_preservation() {
     set_file_mtime(&output_file, t2).unwrap();
 
     // 3. Free Workspace
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
 
     // Wait a bit to ensure 'now' (if the script runs again) would be newer than t2
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -721,7 +721,7 @@ fn test_wheel_extraction_mtime_preservation() {
     assert!(t2 > t3, "Build output should remain newer than input");
 
     // Clean up
-    release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_2.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -761,7 +761,7 @@ fn test_jiri_latest_snapshot_isolation() {
     );
 
     // Clean up
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -820,7 +820,7 @@ fn test_existing_cache_clamping_migration() {
     );
 
     // Clean up
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -848,7 +848,7 @@ fn test_args_gn_mtime_preservation_on_free() {
     set_file_mtime(&args_gn_ref, t1).unwrap();
 
     // 2. Free workspace
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
 
     // 3. Verify args.gn mtime did NOT change
     let t2 = get_file_mtime(&args_gn).unwrap();
@@ -899,7 +899,7 @@ fn test_bazel_package_copying() {
     let t1 = get_file_mtime(&ws_bazel.join("file.txt")).unwrap();
 
     // 4. Free workspace
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
 
     // Wait a bit
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -917,7 +917,7 @@ fn test_bazel_package_copying() {
     );
 
     // Clean up
-    release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_2.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -954,7 +954,7 @@ fn test_nosync_and_sync() {
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
 
     // Clean up
-    release_worktree_by_id(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.environment_id).unwrap();
     remove_environment(config, &env_id, false).unwrap();
 }
 
@@ -972,7 +972,55 @@ fn test_invalid_id_validation() {
     assert!(remove_environment(config, "../invalid", false).is_err());
     assert!(remove_environment(config, "/absolute/path", false).is_err());
 
-    // Test release_worktree_by_id with invalid IDs
-    assert!(release_worktree_by_id(config, "../invalid").is_err());
-    assert!(release_worktree_by_id(config, "/absolute/path").is_err());
+    // Test release_worktree with invalid IDs
+    assert!(release_worktree(config, "../invalid").is_err());
+    assert!(release_worktree(config, "/absolute/path").is_err());
+}
+
+#[test]
+fn test_release_by_agent_id() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create two environments
+    let env_id1 = add_environment(config, "mock_config", false).unwrap();
+    let env_id2 = add_environment(config, "mock_config", false).unwrap();
+
+    // 2. Lease first one with agent_id "agent_unique"
+    let env_info1 = lease_environment(config, "mock_config", "agent_unique", true, true).unwrap();
+    let leased_id = env_info1.environment_id.clone();
+
+    // Verify we can release it using agent_id "agent_unique"
+    release_worktree(config, "agent_unique").unwrap();
+
+    let lease_file1 = config.leases_dir().join(format!("{}.lease", leased_id));
+    assert!(!lease_file1.exists());
+
+    // 3. Lease both with same agent_id "agent_multiple"
+    let env_info1 = lease_environment(config, "mock_config", "agent_multiple", true, true).unwrap();
+    let env_info2 = lease_environment(config, "mock_config", "agent_multiple", true, true).unwrap();
+
+    // Verify releasing by "agent_multiple" fails because it's ambiguous (multiple leases)
+    let release_res = release_worktree(config, "agent_multiple");
+    assert!(release_res.is_err());
+    let err_msg = release_res.unwrap_err().to_string();
+    assert!(err_msg.contains("has leased multiple worktrees"));
+
+    // Verify they are still leased
+    let lease_file1 = config
+        .leases_dir()
+        .join(format!("{}.lease", env_info1.environment_id));
+    let lease_file2 = config
+        .leases_dir()
+        .join(format!("{}.lease", env_info2.environment_id));
+    assert!(lease_file1.exists());
+    assert!(lease_file2.exists());
+
+    // Clean up individually by worktree ID
+    release_worktree(config, &env_info1.environment_id).unwrap();
+    release_worktree(config, &env_info2.environment_id).unwrap();
+
+    remove_environment(config, &env_id1, false).unwrap();
+    remove_environment(config, &env_id2, false).unwrap();
 }

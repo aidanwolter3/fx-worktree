@@ -113,11 +113,14 @@ fn main() -> Result<()> {
             if !cli.json {
                 eprintln!("Resetting worktree {}...", id);
             }
-            release::release_worktree_by_id(&config, &id)?;
+            let released_id = release::release_worktree(&config, &id)?;
             if cli.json {
-                println!("{{\"released\":true,\"environment_id\":\"{}\"}}", id);
+                println!(
+                    "{{\"released\":true,\"environment_id\":\"{}\"}}",
+                    released_id
+                );
             } else {
-                println!("✔ Worktree {} successfully released.", id);
+                println!("✔ Worktree {} successfully released.", released_id);
             }
         }
         Commands::Cd { .. } => {
