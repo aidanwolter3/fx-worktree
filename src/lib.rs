@@ -2,11 +2,10 @@
 
 pub mod cli;
 pub mod config;
-pub mod create;
-pub mod delete;
-pub mod allocate;
-pub mod free;
-pub mod gc;
+pub mod add;
+pub mod remove;
+pub mod lease;
+pub mod release;
 pub mod list;
 pub mod selftest;
 pub mod utils;

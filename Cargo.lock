@@ -247,7 +247,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fxenv"
+name = "fx-worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-pub fn allocate_environment(
+pub fn lease_environment(
     config: &Config,
     config_name: &str,
     agent_id: &str,
@@ -20,7 +20,7 @@ pub fn allocate_environment(
     let envs_dir = config.environments_dir();
     if !envs_dir.exists() {
         return Err(anyhow!(
-            "No environments found. Create one first using 'fxenv create {}'",
+            "No worktrees found. Add one first using 'fx-worktree add {}'",
             config_name
         ));
     }
@@ -38,9 +38,9 @@ pub fn allocate_environment(
                 let prefix = format!("{}_", config_name);
                 if dir_name.starts_with(&prefix) {
                     let id = dir_name;
-                    let is_complete = path.join(".fxenv-completed").exists();
+                    let is_complete = path.join(".fx-worktree-completed").exists();
                     if !is_complete {
-                        log::warn!("Skipping incomplete environment {:?}", path);
+                        log::warn!("Skipping incomplete worktree {:?}", path);
                         continue;
                     }
 
@@ -101,11 +101,11 @@ pub fn allocate_environment(
 
     // Rollback helper on failure
     let rollback = || {
-        log::warn!("Allocation failed, releasing lease {}", env_id);
+        log::warn!("Lease failed, releasing lease {}", env_id);
         let _ = fs::remove_file(&lease_file_path);
     };
 
-    // 2. Reuse the environment (clean and checkout target revisions)
+    // 2. Reuse the worktree (clean and checkout target revisions)
     if sync {
         if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
             rollback();
@@ -113,7 +113,7 @@ pub fn allocate_environment(
         }
     }
 
-    config.record_last_created(&env_info.path)?;
+    config.record_last_active(&env_info.path)?;
 
     Ok(env_info)
 }

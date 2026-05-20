@@ -3,18 +3,18 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub fxenv_root: PathBuf,
+    pub fx_worktree_root: PathBuf,
     pub fuchsia_dir: PathBuf,
 }
 
 impl Config {
     pub fn new(fuchsia_dir_arg: Option<PathBuf>) -> Result<Self> {
-        let fxenv_root = match std::env::var("FXENV_ROOT") {
+        let fx_worktree_root = match std::env::var("FX_WORKTREE_ROOT") {
             Ok(val) => PathBuf::from(val),
             Err(_) => {
                 let home =
                     std::env::var("HOME").context("Failed to get HOME environment variable")?;
-                PathBuf::from(home).join(".fuchsia-agents")
+                PathBuf::from(home).join(".fuchsia").join("worktrees")
             }
         };
 
@@ -39,7 +39,7 @@ impl Config {
         }
 
         Ok(Config {
-            fxenv_root,
+            fx_worktree_root,
             fuchsia_dir,
         })
     }
@@ -58,29 +58,29 @@ impl Config {
     }
 
     pub fn leases_dir(&self) -> PathBuf {
-        self.fxenv_root.join("leases")
+        self.fx_worktree_root.join("leases")
     }
 
     pub fn environments_dir(&self) -> PathBuf {
-        self.fxenv_root.join("environments")
+        self.fx_worktree_root.join("environments")
     }
 
-    pub fn last_created_file(&self) -> PathBuf {
-        self.fxenv_root.join("last_created")
+    pub fn last_active_file(&self) -> PathBuf {
+        self.fx_worktree_root.join("last_active")
     }
 
-    pub fn record_last_created(&self, path: &Path) -> Result<()> {
-        std::fs::write(self.last_created_file(), path.to_string_lossy().as_bytes())
-            .with_context(|| format!("Failed to write last_created file"))
+    pub fn record_last_active(&self, path: &Path) -> Result<()> {
+        std::fs::write(self.last_active_file(), path.to_string_lossy().as_bytes())
+            .with_context(|| format!("Failed to write last_active file"))
     }
 
-    pub fn read_last_created(&self) -> Result<PathBuf> {
-        let file = self.last_created_file();
+    pub fn read_last_active(&self) -> Result<PathBuf> {
+        let file = self.last_active_file();
         if !file.exists() {
-            return Err(anyhow!("No environment has been created yet."));
+            return Err(anyhow!("No worktree has been active yet."));
         }
         let path_str = std::fs::read_to_string(&file)
-            .with_context(|| format!("Failed to read last_created file"))?;
+            .with_context(|| format!("Failed to read last_active file"))?;
         Ok(PathBuf::from(path_str.trim()))
     }
 }

@@ -6,9 +6,9 @@ use crate::config::Config;
 use crate::environment::EnvironmentInfo;
 
 #[derive(serde::Serialize)]
-struct EnvironmentListEntry {
+struct WorktreeListEntry {
     config: String,
-    environment_id: String,
+    worktree_id: String,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_id: Option<String>,
@@ -47,7 +47,7 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    let is_complete = path.join(".fxenv-completed").exists();
+                    let is_complete = path.join(".fx-worktree-completed").exists();
                     if !is_complete {
                         continue;
                     }
@@ -66,9 +66,9 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
                         "Free".to_string()
                     };
 
-                    env_entries.push(EnvironmentListEntry {
+                    env_entries.push(WorktreeListEntry {
                         config: config_name,
-                        environment_id: dir_name.to_string(),
+                        worktree_id: dir_name.to_string(),
                         status,
                         agent_id,
                     });
@@ -85,22 +85,22 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
     }
 
     if env_entries.is_empty() {
-        println!("No environments found in pool.");
+        println!("No worktrees found in pool.");
         return Ok(());
     }
 
     // 3. Print pretty table
     let mut max_config = 6; // "CONFIG".len()
-    let mut max_id = 14;     // "ENVIRONMENT ID".len()
+    let mut max_id = 11;     // "WORKTREE ID".len()
     for entry in &env_entries {
         max_config = max_config.max(entry.config.len());
-        max_id = max_id.max(entry.environment_id.len());
+        max_id = max_id.max(entry.worktree_id.len());
     }
 
     println!(
         "{:<cfg_width$}   {:<id_width$}   STATUS",
         "CONFIG",
-        "ENVIRONMENT ID",
+        "WORKTREE ID",
         cfg_width = max_config,
         id_width = max_id
     );
@@ -113,7 +113,7 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
         println!(
             "{:<cfg_width$}   {:<id_width$}   {}",
             entry.config,
-            entry.environment_id,
+            entry.worktree_id,
             status_str,
             cfg_width = max_config,
             id_width = max_id

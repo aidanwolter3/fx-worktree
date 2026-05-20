@@ -4,9 +4,9 @@ use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::Path;
 
-pub fn delete_environment(config: &Config, id: &str) -> Result<()> {
+pub fn remove_environment(config: &Config, id: &str) -> Result<()> {
     if std::path::Path::new(id).components().count() > 1 {
-        return Err(anyhow!("Invalid environment ID: {}", id));
+        return Err(anyhow!("Invalid worktree ID: {}", id));
     }
 
     // 1. Verify the environment is not leased
@@ -19,7 +19,7 @@ pub fn delete_environment(config: &Config, id: &str) -> Result<()> {
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lease") {
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                     if file_name.ends_with(&suffix) {
-                        return Err(anyhow!("Cannot delete environment {} because it is currently in use (leased).", id));
+                        return Err(anyhow!("Cannot remove worktree {} because it is currently in use (leased).", id));
                     }
                 }
             }

@@ -6,11 +6,11 @@ use std::path::PathBuf;
 pub fn locate_path(config: &Config, id: Option<String>) -> Result<PathBuf> {
     let id = match id {
         Some(ref val) if !val.trim().is_empty() => val.clone(),
-        _ => return config.read_last_created(),
+        _ => return config.read_last_active(),
     };
 
     if std::path::Path::new(&id).components().count() > 1 {
-        return Err(anyhow!("Invalid environment ID: {}", id));
+        return Err(anyhow!("Invalid worktree ID: {}", id));
     }
 
     // 1. Check if the exact directory exists
@@ -36,5 +36,5 @@ pub fn locate_path(config: &Config, id: Option<String>) -> Result<PathBuf> {
         }
     }
 
-    Err(anyhow!("Environment ID {} not found", id))
+    Err(anyhow!("Worktree ID {} not found", id))
 }

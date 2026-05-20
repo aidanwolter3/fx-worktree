@@ -302,9 +302,9 @@ fn resolve_and_download_prebuilts(
     }
     let lock_map = load_lockfiles(workspace_path)?;
     let host_platform = get_cipd_platform();
-    let shared_prebuilts_dir = config.fxenv_root.join("shared-prebuilts");
+    let shared_prebuilts_dir = config.fx_worktree_root.join("shared-prebuilts");
     fs::create_dir_all(&shared_prebuilts_dir)?;
-    let marker_dir = config.fxenv_root.join("clamped-markers");
+    let marker_dir = config.fx_worktree_root.join("clamped-markers");
     fs::create_dir_all(&marker_dir)?;
 
     let grouped_packages = group_packages_by_path(packages, host_platform);

@@ -14,16 +14,16 @@ struct JiriProject {
     revision: String,
 }
 
-pub fn create_environment(config: &Config, config_name: &str) -> Result<String> {
+pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
     let uuid = Uuid::new_v4().to_string();
     let env_id = format!("{}_{}", config_name, uuid);
     let env_path = config.environments_dir().join(&env_id);
 
-    println!("Creating environment {}...", env_id);
+    println!("Adding worktree {}...", env_id);
 
     // 1. Create directory structure
     fs::create_dir_all(&env_path)
-        .with_context(|| format!("Failed to create environment directory {:?}", env_path))?;
+        .with_context(|| format!("Failed to create worktree directory {:?}", env_path))?;
 
     // Implement cleanup helper in case creation fails in the middle
     let cleanup = || {
@@ -88,10 +88,10 @@ pub fn create_environment(config: &Config, config_name: &str) -> Result<String> 
     }
 
     // 6. Write completion marker
-    fs::write(env_path.join(".fxenv-completed"), "")
+    fs::write(env_path.join(".fx-worktree-completed"), "")
         .with_context(|| format!("Failed to write completion marker"))?;
 
-    config.record_last_created(&env_path)?;
+    config.record_last_active(&env_path)?;
 
     Ok(env_id)
 }

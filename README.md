@@ -1,8 +1,8 @@
-# fxenv (Fuchsia Environment Manager)
+# fx-worktree (Fuchsia Worktree Manager)
 
-`fxenv` is a stateless, concurrent-safe CLI tool designed to provision instantaneous, isolated development environments for parallel agents working on Fuchsia.
+`fx-worktree` is a stateless, concurrent-safe CLI tool designed to provision instantaneous, isolated development environments for parallel agents working on Fuchsia.
 
-It pools persistent **Environments** (workspaces) on disk to preserve Ninja build timestamps and remote compiler caches, allowing sequential agents to reuse environments and achieve **no-op incremental build speeds (< 3 seconds)**, while isolating parallel runs.
+It pools persistent **Worktrees** (workspaces) on disk to preserve Ninja build timestamps and remote compiler caches, allowing sequential agents to reuse environments and achieve **no-op incremental build speeds (< 3 seconds)**, while isolating parallel runs.
 
 ---
 
@@ -13,22 +13,22 @@ Compile and install the binary locally:
 cargo install --path . --force
 ```
 
-### Zsh Shell Integration (Required for `fxenv cd`)
+### Zsh Shell Integration (Required for `fx-worktree cd`)
 Add the shell wrapper function to your `~/.zshrc` to support the directory navigation feature:
 
 ```zsh
-# fxenv shell wrapper for cd command
-fxenv() {
+# fx-worktree shell wrapper for cd command
+fx-worktree() {
     if [[ "$1" == "cd" ]]; then
         local target_path
-        target_path=$(command fxenv locate "$2")
+        target_path=$(command fx-worktree locate "$2")
         if [[ $? -eq 0 && -n "$target_path" ]]; then
             cd "$target_path"
         else
             return 1
         fi
     else
-        command fxenv "$@"
+        command fx-worktree "$@"
     fi
 }
 ```
@@ -36,7 +36,7 @@ fxenv() {
 Set up Zsh completions (optional):
 ```bash
 mkdir -p ~/.zsh/completion
-fxenv completions zsh > ~/.zsh/completion/_fxenv
+fx-worktree completions zsh > ~/.zsh/completion/_fx-worktree
 # Add ~/.zsh/completion to your fpath in ~/.zshrc before compinit
 ```
 
@@ -44,79 +44,79 @@ fxenv completions zsh > ~/.zsh/completion/_fxenv
 
 ## Commands and Usage
 
-### 1. Create a Pool Slot (Environment)
-Creates and bootstraps a new persistent environment slot in the pool (runs `git worktree add`, `fx set`, and registers the slot).
+### 1. Add a Worktree
+Add a new worktree with a dedicated outdir.
 ```bash
-fxenv create <config_name>
+fx-worktree add <config_name>
 ```
 
-### 2. Allocate an Environment (Use)
-Leases a free environment of the config type. By default, it does NOT sync the worktree to the parent's current revision.
+### 2. Lease a Worktree
+Lease a worktree to start work.
 ```bash
-fxenv use <config_name> [--agent-id <agent_name>] [--sync] [--json]
+fx-worktree lease <config_name> [--agent-id <agent_name>] [--sync] [--json]
 ```
-*   `--sync`: Opt-in to sync the worktree to the parent's current revision, clean it, and download/isolate prebuilts.
+*   `--sync`: Opt-in to update the worktree to the latest code in the main fuchsia checkout, clean it, and download/isolate prebuilts.
 
 *   **Default Output (Human Friendly):**
     ```none
-    ✔ Workspace allocated successfully!
+    ✔ Worktree leased successfully!
 
-      ℹ Environment ID : fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5
+      ℹ Worktree ID    : fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5
       ℹ Agent ID       : agent-2f26359d
       ℹ Config         : fuchsia_internal.x64
-      ℹ Path           : /home/user/.fuchsia-agents/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5
+      ℹ Path           : /home/user/.fuchsia/worktrees/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5
 
-    To change directory into the workspace:
-      $ fxenv cd fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5  # Navigate to this specific workspace
-      $ fxenv cd                     # Navigate to the last created environment
+    To change directory into the worktree:
+      $ fx-worktree cd fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5  # Navigate to this specific worktree
+      $ fx-worktree cd                     # Navigate to the last leased worktree
     ```
 
 *   **JSON Output (via `--json`):**
     ```json
-    {"environment_id":"fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5","agent_id":"agent-2f26359d","config":"fuchsia_internal.x64","pid":2549294,"timestamp_sec":1779221652,"path":"/home/user/.fuchsia-agents/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5"}
+    {"environment_id":"fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5","agent_id":"agent-2f26359d","config":"fuchsia_internal.x64","pid":2549294,"timestamp_sec":1779221652,"path":"/home/user/.fuchsia/worktrees/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5"}
     ```
 
-### 3. Sync an Environment
-Updates an environment (even if in use) to the parent's current revisions, cleans it, and updates prebuilts.
+### 3. Update a Worktree (Sync)
+Update a worktree to the latest code in the main fuchsia checkout.
 ```bash
-fxenv sync <environment_id>
+fx-worktree sync <worktree_id>
 ```
 
-### 4. List Environments
-Shows all environments in the pool and their lease status.
+### 4. List Worktrees
+List worktrees.
 ```bash
-fxenv list [--json]
+fx-worktree list [--json]
 ```
 
 *   **Default Output:**
     ```none
-    CONFIG                 ENVIRONMENT ID                                     STATUS
+    CONFIG                 WORKTREE ID                                        STATUS
     fuchsia.x64            fuchsia.x64_37954053-f927-45f1-9086-01d7b07c35bf   Free
     fuchsia_internal.x64   fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95...    In Use (agent_1)
     ```
 
-### 5. Free an Environment
-Cleans the environment (resets git, runs `git clean` excluding the build cache in `out/`) and releases the lease.
+### 5. Release a Worktree
+Release and reset a worktree (does a git reset).
 ```bash
-fxenv free <environment_id> [--json]
+fx-worktree release <worktree_id> [--json]
 ```
 
-### 6. Delete an Environment
-Completely removes the environment from disk and unregisters the worktrees.
+### 6. Remove a Worktree
+Remove a worktree and its dedicated outdir.
 ```bash
-fxenv delete <environment_id>
+fx-worktree remove <worktree_id>
 ```
 
-### 7. Change Directory into Environment
-Cds into the environment folder (resolves ID or short suffix, falls back to the last allocated environment if omitted).
+### 7. Change Directory into Worktree
+Change directory to a worktree (shell wrapper required).
 ```bash
-fxenv cd [environment_id]
+fx-worktree cd [worktree_id]
 ```
 
 ### 8. Run Self-Test
-Runs a programmatic verification of the `fxenv` lifecycle (allocation, build regeneration, cache preservation, and cleanup) using an existing environment.
+Runs a programmatic verification of the `fx-worktree` lifecycle (leasing, build regeneration, cache preservation, and cleanup) using an existing worktree.
 ```bash
-fxenv self-test <environment_id>
+fx-worktree self-test <worktree_id>
 ```
 > [!IMPORTANT]
-> The target environment must be "Free" (not leased by any agent) and should ideally be "warmed" (built at least once) to run the test quickly.
+> The target worktree must be "Free" (not leased by any agent) and should ideally be "warmed" (built at least once) to run the test quickly.

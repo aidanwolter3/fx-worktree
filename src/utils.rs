@@ -48,7 +48,7 @@ pub fn clean_worktree(worktree_path: &Path, is_root: bool) -> Result<()> {
     let mut clean_args = vec!["clean", "-fdx"];
     if is_root {
         clean_args.extend_from_slice(&[
-            "-e", ".fxenv-completed",
+            "-e", ".fx-worktree-completed",
             "-e", "prebuilt",
             "-e", ".jiri_root",
             "-e", ".fx-build-dir",

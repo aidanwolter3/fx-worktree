@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
-use fxenv::cli::{Cli, Commands};
-use fxenv::config::Config;
-use fxenv::{allocate, create, delete, free, gc, list, locate, selftest, sync};
+use fx_worktree::cli::{Cli, Commands};
+use fx_worktree::config::Config;
+use fx_worktree::{add, remove, lease, release, list, locate, selftest, sync};
 
 fn main() -> Result<()> {
     // Initialize logger (default to warn to silence info logs by default)
@@ -10,11 +10,26 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Create { config: cfg } => {
+    if cli.helpfull {
+        let mut cmd = Cli::command();
+        for sub in cmd.get_subcommands_mut() {
+            *sub = sub.clone().hide(false);
+        }
+        cmd.print_help()?;
+        return Ok(());
+    }
+
+    if cli.help || cli.command.is_none() {
+        let mut cmd = Cli::command();
+        cmd.print_help()?;
+        return Ok(());
+    }
+
+    match cli.command.unwrap() {
+        Commands::Add { config: cfg } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            let env_id = create::create_environment(&config, &cfg)?;
+            let env_id = add::add_environment(&config, &cfg)?;
             if cli.json {
                 println!(
                     "{{\"environment_id\":\"{}\",\"config\":\"{}\"}}",
@@ -22,19 +37,19 @@ fn main() -> Result<()> {
                 );
             } else {
                 println!(
-                    "✔ Environment {} successfully created for config {}.",
+                    "✔ Worktree {} successfully added for config {}.",
                     env_id, cfg
                 );
             }
         }
-        Commands::Delete { id } => {
+        Commands::Remove { id } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            delete::delete_environment(&config, &id)?;
+            remove::remove_environment(&config, &id)?;
             if cli.json {
-                println!("{{\"deleted\":true,\"environment_id\":\"{}\"}}", id);
+                println!("{{\"removed\":true,\"environment_id\":\"{}\"}}", id);
             } else {
-                println!("✔ Environment {} successfully deleted.", id);
+                println!("✔ Worktree {} successfully removed.", id);
             }
         }
         Commands::List => {
@@ -42,7 +57,7 @@ fn main() -> Result<()> {
             config.init_topology()?;
             list::list_environments(&config, cli.json)?;
         }
-        Commands::Use {
+        Commands::Lease {
             config: cfg,
             agent_id,
             sync,
@@ -54,23 +69,23 @@ fn main() -> Result<()> {
                 format!("agent-{}", &uuid[0..8])
             });
             let env_info =
-                allocate::allocate_environment(&config, &cfg, &agent_id, sync, cli.json)?;
+                lease::lease_environment(&config, &cfg, &agent_id, sync, cli.json)?;
             if cli.json {
                 let json = serde_json::to_string(&env_info)?;
                 println!("{}", json);
             } else {
-                println!("✔ Workspace allocated successfully!\n");
-                println!("  ℹ Environment ID : {}", env_info.environment_id);
+                println!("✔ Worktree leased successfully!\n");
+                println!("  ℹ Worktree ID    : {}", env_info.environment_id);
                 println!("  ℹ Agent ID       : {}", env_info.agent_id);
                 println!("  ℹ Config         : {}", env_info.config);
                 println!("  ℹ Path           : {}", env_info.path.to_string_lossy());
-                println!("\nTo change directory into the workspace:");
+                println!("\nTo change directory into the worktree:");
                 println!(
-                    "  $ fxenv cd {}  # Navigate to this specific workspace",
+                    "  $ fx-worktree cd {}  # Navigate to this specific worktree",
                     env_info.environment_id
                 );
                 println!(
-                    "  $ fxenv cd                     # Navigate to the last created environment"
+                    "  $ fx-worktree cd                     # Navigate to the last leased worktree"
                 );
             }
         }
@@ -84,19 +99,19 @@ fn main() -> Result<()> {
                 println!("✔ Environment {} successfully synced.", id);
             }
         }
-        Commands::Free { id } => {
+        Commands::Release { id } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            free::free_environment_by_id(&config, &id)?;
+            release::release_worktree_by_id(&config, &id)?;
             if cli.json {
-                println!("{{\"freed\":true,\"environment_id\":\"{}\"}}", id);
+                println!("{{\"released\":true,\"environment_id\":\"{}\"}}", id);
             } else {
-                println!("✔ Environment {} successfully freed.", id);
+                println!("✔ Worktree {} successfully released.", id);
             }
         }
         Commands::Cd { .. } => {
             return Err(anyhow::anyhow!(
-                "The 'cd' command requires the fxenv shell wrapper. Make sure your shell is initialized correctly."
+                "The 'cd' command requires the fx-worktree shell wrapper. Make sure your shell is initialized correctly."
             ));
         }
         Commands::Locate { id } => {
@@ -109,82 +124,75 @@ fn main() -> Result<()> {
             config.init_topology()?;
             selftest::run_self_test(&config, id)?;
         }
-        Commands::Gc { timeout } => {
-            let config = Config::new(cli.fuchsia_dir)?;
-            config.init_topology()?;
-            gc::garbage_collect(&config, timeout)?;
-            if !cli.json {
-                println!("✔ Garbage collection completed.");
-            }
-        }
+
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             let mut buf = Vec::new();
-            clap_complete::generate(shell, &mut cmd, "fxenv", &mut buf);
+            clap_complete::generate(shell, &mut cmd, "fx-worktree", &mut buf);
             let mut script =
                 String::from_utf8(buf).context("Failed to parse generated completions as UTF-8")?;
 
             if shell == clap_complete::Shell::Zsh {
                 // Patch positional ID completions
                 script = script.replace(
-                    "':id -- Environment ID to delete (must be free):_default'",
-                    "':id -- Environment ID to delete (must be free):_fxenv_free_env_ids'",
+                    "':id -- Worktree ID to remove (must be free):_default'",
+                    "':id -- Worktree ID to remove (must be free):_fx_worktree_free_ids'",
                 );
                 script = script.replace(
-                    "':id -- Environment ID to free (must be leased):_default'",
-                    "':id -- Environment ID to free (must be leased):_fxenv_leased_env_ids'",
+                    "':id -- Worktree ID to release (must be leased):_default'",
+                    "':id -- Worktree ID to release (must be leased):_fx_worktree_leased_ids'",
                 );
                 script = script.replace(
-                    "'::id -- Environment ID:_default'",
-                    "'::id -- Environment ID:_fxenv_all_env_ids'",
+                    "'::id -- Worktree ID:_default'",
+                    "'::id -- Worktree ID:_fx_worktree_all_ids'",
                 );
                 script = script.replace(
-                    "':id -- Environment ID to sync:_default'",
-                    "':id -- Environment ID to sync:_fxenv_all_env_ids'",
+                    "':id -- Worktree ID to sync:_default'",
+                    "':id -- Worktree ID to sync:_fx_worktree_all_ids'",
                 );
                 script = script.replace(
-                    "':id -- Environment ID to use for the test:_default'",
-                    "':id -- Environment ID to use for the test:_fxenv_free_env_ids'",
+                    "':id -- Worktree ID to use for the test:_default'",
+                    "':id -- Worktree ID to use for the test:_fx_worktree_free_ids'",
                 );
 
                 // Patch positional config completions
                 script = script.replace(
                     "':config -- Configuration name (e.g. fuchsia.x64):_default'",
-                    "':config -- Configuration name (e.g. fuchsia.x64):_fxenv_configs'",
+                    "':config -- Configuration name (e.g. fuchsia.x64):_fx_worktree_configs'",
                 );
 
                 // Move entry point block to the very end of the file
-                let entry_point = r#"if [ "$funcstack[1]" = "_fxenv" ]; then
-    _fxenv "$@"
+                let entry_point = r#"if [ "$funcstack[1]" = "_fx-worktree" ]; then
+    _fx-worktree "$@"
 else
-    compdef _fxenv fxenv
+    compdef _fx-worktree fx-worktree
 fi"#;
                 if let Some(idx) = script.find(entry_point) {
                     script.replace_range(idx..idx + entry_point.len(), "");
 
                     script.push_str("\n\n# Custom dynamic completion helpers\n");
                     script.push_str(
-                        r#"_fxenv_free_env_ids() {
+                        r#"_fx_worktree_free_ids() {
     local -a ids
-    ids=($(fxenv list 2>/dev/null | grep -E '\s+Free$' | awk '{print $2}'))
-    _describe -t ids 'free environment ID' ids
+    ids=($(fx-worktree list 2>/dev/null | grep -E '\s+Free$' | awk '{print $2}'))
+    _describe -t ids 'free worktree ID' ids
 }
 
-_fxenv_leased_env_ids() {
+_fx_worktree_leased_ids() {
     local -a ids
-    ids=($(fxenv list 2>/dev/null | grep -E 'In Use' | awk '{print $2}'))
-    _describe -t ids 'leased environment ID' ids
+    ids=($(fx-worktree list 2>/dev/null | grep -E 'In Use' | awk '{print $2}'))
+    _describe -t ids 'leased worktree ID' ids
 }
 
-_fxenv_all_env_ids() {
+_fx_worktree_all_ids() {
     local -a ids
-    ids=($(fxenv list 2>/dev/null | tail -n +2 | awk '{print $2}'))
-    _describe -t ids 'environment ID' ids
+    ids=($(fx-worktree list 2>/dev/null | tail -n +2 | awk '{print $2}'))
+    _describe -t ids 'worktree ID' ids
 }
 
-_fxenv_configs() {
+_fx_worktree_configs() {
     local -a configs
-    configs=($(fxenv list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -u))
+    configs=($(fx-worktree list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -u))
     _describe -t configs 'configuration' configs
 }
 "#,

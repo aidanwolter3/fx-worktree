@@ -6,16 +6,16 @@ use rayon::prelude::*;
 use std::fs;
 use std::path::Path;
 
-pub fn free_environment_by_id(config: &Config, id: &str) -> Result<()> {
+pub fn release_worktree_by_id(config: &Config, id: &str) -> Result<()> {
     if std::path::Path::new(id).components().count() > 1 {
-        return Err(anyhow!("Invalid environment ID: {}", id));
+        return Err(anyhow!("Invalid worktree ID: {}", id));
     }
 
     let lease_file_name = format!("{}.lease", id);
     let lease_file_path = config.leases_dir().join(&lease_file_name);
 
     if !lease_file_path.exists() {
-        return Err(anyhow!("Environment lease file {:?} does not exist", lease_file_path));
+        return Err(anyhow!("Worktree lease file {:?} does not exist", lease_file_path));
     }
 
     let env_json = fs::read_to_string(&lease_file_path)
@@ -23,7 +23,7 @@ pub fn free_environment_by_id(config: &Config, id: &str) -> Result<()> {
     let env_info: EnvironmentInfo =
         serde_json::from_str(&env_json).context("Failed to parse EnvironmentInfo JSON")?;
 
-    free_environment_internal(&env_info)?;
+    release_worktree_internal(&env_info)?;
 
     // Delete lease file
     fs::remove_file(&lease_file_path)
@@ -33,8 +33,8 @@ pub fn free_environment_by_id(config: &Config, id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn free_environment_internal(env_info: &EnvironmentInfo) -> Result<()> {
-    log::info!("Freeing environment {}", env_info.environment_id);
+pub fn release_worktree_internal(env_info: &EnvironmentInfo) -> Result<()> {
+    log::info!("Releasing worktree {}", env_info.environment_id);
 
     // Record index mtimes before clean
     let worktrees = find_worktrees(&env_info.path)?;

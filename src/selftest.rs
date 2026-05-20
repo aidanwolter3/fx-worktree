@@ -3,16 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::allocate::allocate_environment;
+use crate::lease::lease_environment;
 use crate::config::Config;
-use crate::delete::delete_environment;
-use crate::free::free_environment_by_id;
+use crate::remove::remove_environment;
+use crate::release::release_worktree_by_id;
 use crate::utils::run_command;
 
 pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
-    println!("=== Starting fxenv self-test ===");
+    println!("=== Starting fx-worktree self-test ===");
 
-    // 1. Initialize temporary self-test environment root inside the user's fxenv_root
+    // 1. Initialize temporary self-test environment root inside the user's fx_worktree_root
     // to ensure it is on the same physical filesystem (SSD) so Jiri hardlinking works.
     let rand_id = uuid::Uuid::new_v4().to_string();
     let selftest_root = config
@@ -23,7 +23,7 @@ pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
     fs::create_dir_all(&selftest_root)?;
 
     // Share the prebuilt cache to speed up the self-test
-    let base_shared_prebuilts = config.fxenv_root.join("shared-prebuilts");
+    let base_shared_prebuilts = config.fx_worktree_root.join("shared-prebuilts");
     fs::create_dir_all(&base_shared_prebuilts)?;
     let test_shared_prebuilts = selftest_root.join("shared-prebuilts");
     std::os::unix::fs::symlink(&base_shared_prebuilts, &test_shared_prebuilts).with_context(
@@ -36,7 +36,7 @@ pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
     )?;
 
     let test_config = Config {
-        fxenv_root: selftest_root.clone(),
+        fx_worktree_root: selftest_root.clone(),
         fuchsia_dir: config.fuchsia_dir.clone(),
     };
     test_config.init_topology()?;
@@ -57,15 +57,15 @@ pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
 }
 
 fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Result<()> {
-    let should_delete_env = false;
+    let should_remove_worktree = false;
 
-    // 1. Resolve and verify environment
+    // 1. Resolve and verify worktree
     let env_id = if env_id_or_path.contains('/') || env_id_or_path.contains('\\') {
         // It's a path
         let path = PathBuf::from(&env_id_or_path);
         if !path.exists() {
             return Err(anyhow!(
-                "Specified environment path {:?} does not exist",
+                "Specified worktree path {:?} does not exist",
                 path
             ));
         }
@@ -77,7 +77,7 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     } else {
         // It's an ID, verify it exists in the user's config root
         let base_config = Config {
-            fxenv_root: test_config
+            fx_worktree_root: test_config
                 .leases_dir()
                 .parent()
                 .unwrap()
@@ -89,7 +89,7 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
         let env_path = base_config.environments_dir().join(&env_id_or_path);
         if !env_path.exists() {
             return Err(anyhow!(
-                "Specified environment ID {} does not exist in pool",
+                "Specified worktree ID {} does not exist in pool",
                 env_id_or_path
             ));
         }
@@ -102,11 +102,11 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     // Extract config name from env_id (format is <config>_<uuid>)
     let last_underscore = env_id
         .rfind('_')
-        .context("Invalid environment ID format. Expected <config>_<uuid>")?;
+        .context("Invalid worktree ID format. Expected <config>_<uuid>")?;
     let config_name = &env_id[0..last_underscore];
 
     let env_path = test_config.environments_dir().join(&env_id);
-    println!("Test environment path: {:?}", env_path);
+    println!("Test worktree path: {:?}", env_path);
 
     let target_label = "//:default";
     let watch_relative_path = "build.ninja";
@@ -119,19 +119,19 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
         "fx"
     };
 
-    let mut allocated = false;
+    let mut leased = false;
 
     let test_res = (|| -> Result<()> {
-        // 2. Warm environment (build in the environment slot)
-        if should_delete_env {
-            println!("Warming environment (building target)...");
+        // 2. Warm worktree (build in the worktree slot)
+        if should_remove_worktree {
+            println!("Warming worktree (building target)...");
             run_command(fx_cmd, &["build", target_label], &env_path, &[])
                 .context("Failed to build target to warm cache")?;
         } else {
-            println!("Verifying build configuration exists in the specified environment...");
+            println!("Verifying build configuration exists in the specified worktree...");
             if !watch_file_path.exists() {
                 return Err(anyhow!(
-                    "Expected build file {:?} was not found. You must run generator in the environment first.",
+                    "Expected build file {:?} was not found. You must run generator in the worktree first.",
                     watch_file_path
                 ));
             }
@@ -140,13 +140,13 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
         let t1 = get_modify_time(&watch_file_path)?;
         println!("Build file modify time: {:?}", t1);
 
-        // 3. Allocate the environment (leases it and updates revisions)
-        println!("Allocating environment (updating Git worktrees)...");
+        // 3. Lease the worktree (leases it and updates revisions)
+        println!("Leasing worktree (updating Git worktrees)...");
         let env_info =
-            allocate_environment(test_config, config_name, "self_test_agent", true, false)
-                .context("Failed to allocate environment")?;
-        println!("Allocated workspace: {:?}", env_info.path);
-        allocated = true;
+            lease_environment(test_config, config_name, "self_test_agent", true, false)
+                .context("Failed to lease worktree")?;
+        println!("Leased worktree: {:?}", env_info.path);
+        leased = true;
 
         // 4. Verify build in workspace is a no-op (or at least succeeds)
         println!("Verifying build in workspace (no changes)...");
@@ -197,8 +197,8 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
             .context("Failed to restore source file to original content")?;
 
         // Re-warm/rebuild to restore cache
-        if !should_delete_env {
-            println!("Restoring build cache in the reused environment...");
+        if !should_remove_worktree {
+            println!("Restoring build cache in the reused worktree...");
             run_command(fx_cmd, &["build", target_label], &env_info.path, &[])
                 .context("Failed to rebuild after restoring source file")?;
         }
@@ -207,17 +207,17 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     })();
 
     // 7. Cleanup
-    println!("Cleaning up environment lease...");
-    if allocated {
-        if let Err(e) = free_environment_by_id(test_config, &env_id) {
-            log::error!("Failed to free environment during cleanup: {:?}", e);
+    println!("Cleaning up worktree lease...");
+    if leased {
+        if let Err(e) = release_worktree_by_id(test_config, &env_id) {
+            log::error!("Failed to release worktree during cleanup: {:?}", e);
         }
     }
 
-    if should_delete_env {
-        delete_environment(test_config, &env_id).context("Failed to delete environment")?;
+    if should_remove_worktree {
+        remove_environment(test_config, &env_id).context("Failed to remove worktree")?;
     } else {
-        println!("Skipping environment deletion (reused environment)");
+        println!("Skipping worktree removal (reused worktree)");
     }
 
     test_res
