@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use fxenv::cli::{Cli, Commands};
 use fxenv::config::Config;
-use fxenv::{create, delete, allocate, free, list, locate, selftest, gc};
+use fxenv::{create, delete, allocate, free, list, locate, selftest, gc, sync};
 
 fn main() -> Result<()> {
     // Initialize logger (default to warn to silence info logs by default)
@@ -36,14 +36,14 @@ fn main() -> Result<()> {
             config.init_topology()?;
             list::list_environments(&config, cli.json)?;
         }
-        Commands::Use { config: cfg, agent_id } => {
+        Commands::Use { config: cfg, agent_id, sync } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
             let agent_id = agent_id.unwrap_or_else(|| {
                 let uuid = uuid::Uuid::new_v4().to_string();
                 format!("agent-{}", &uuid[0..8])
             });
-            let env_info = allocate::allocate_environment(&config, &cfg, &agent_id, cli.json)?;
+            let env_info = allocate::allocate_environment(&config, &cfg, &agent_id, sync, cli.json)?;
             if cli.json {
                 let json = serde_json::to_string(&env_info)?;
                 println!("{}", json);
@@ -56,6 +56,16 @@ fn main() -> Result<()> {
                 println!("\nTo change directory into the workspace:");
                 println!("  $ fxenv cd {}  # Navigate to this specific workspace", env_info.environment_id);
                 println!("  $ fxenv cd                     # Navigate to the last created environment");
+            }
+        }
+        Commands::Sync { id } => {
+            let config = Config::new(cli.fuchsia_dir)?;
+            config.init_topology()?;
+            sync::sync_environment_by_id(&config, &id, cli.json)?;
+            if cli.json {
+                println!("{{\"synced\":true,\"environment_id\":\"{}\"}}", id);
+            } else {
+                println!("✔ Environment {} successfully synced.", id);
             }
         }
         Commands::Free { id } => {
@@ -108,6 +118,10 @@ fn main() -> Result<()> {
                 script = script.replace(
                     "'::id -- Environment ID:_default'",
                     "'::id -- Environment ID:_fxenv_all_env_ids'",
+                );
+                script = script.replace(
+                    "':id -- Environment ID to sync:_default'",
+                    "':id -- Environment ID to sync:_fxenv_all_env_ids'",
                 );
 
                 // Patch positional config completions

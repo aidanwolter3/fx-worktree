@@ -50,10 +50,17 @@ These commands manage the pool of persistent environments. The build directories
 ### 2. Allocation & Lifecycle
 *   **Use (Allocate) an Environment**:
     ```bash
-    fxenv use <config_name> [--agent-id <agent_name>]
+    fxenv use <config_name> [--agent-id <agent_name>] [--sync]
     ```
-    Leases a free environment from the pool matching the config and creates an isolated git worktree mapped to it. 
+    Leases a free environment from the pool matching the config and creates an isolated git worktree mapped to it.
+    By default, it does NOT sync the worktree. Pass `--sync` to update it to the parent's current revision and update prebuilts.
     Prints allocation details (path, agent ID, etc.) and runs `fx gen`.
+
+*   **Sync an Environment**:
+    ```bash
+    fxenv sync <env_id>
+    ```
+    Syncs the environment (even if in use) to the parent's current revision, cleans it, and updates prebuilts.
 
 *   **Free (Release) an Environment**:
     ```bash

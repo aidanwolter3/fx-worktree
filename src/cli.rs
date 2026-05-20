@@ -42,9 +42,18 @@ pub enum Commands {
         /// Optional agent ID (will be randomly generated if omitted)
         #[arg(long)]
         agent_id: Option<String>,
+        /// Sync the worktree to the latest code
+        #[arg(long)]
+        sync: bool,
+    },
+    /// Sync an environment to the latest code
+    Sync {
+        /// Environment ID to sync
+        id: String,
     },
     /// Free (release) an environment back to the pool
     Free {
+
         /// Environment ID to free (must be leased)
         id: String,
     },

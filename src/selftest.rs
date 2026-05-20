@@ -126,7 +126,7 @@ fn run_self_test_lifecycle(test_config: &Config, use_env_id: Option<String>) -> 
 
         // 3. Allocate the environment (leases it and updates revisions)
         println!("Allocating environment (updating Git worktrees)...");
-        let env_info = allocate_environment(test_config, config_name, "self_test_agent", false)
+        let env_info = allocate_environment(test_config, config_name, "self_test_agent", true, false)
             .context("Failed to allocate environment")?;
         println!("Allocated workspace: {:?}", env_info.path);
         allocated = true;

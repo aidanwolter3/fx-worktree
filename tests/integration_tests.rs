@@ -288,7 +288,7 @@ fn test_full_lifecycle() {
     list_environments(config, false).unwrap();
 
     // 2. Test Environment Allocate (reuses the created slot)
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
     assert_eq!(env_info.agent_id, "test_agent");
     assert_eq!(env_info.config, "mock_config");
 
@@ -333,7 +333,7 @@ fn test_gc() {
 
     // Create and allocate
     let env_id = create_environment(config, "mock_config").unwrap();
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
 
     let lease_file = config.leases_dir().join(format!("{}.lease", env_id));
     assert!(lease_file.exists());
@@ -369,7 +369,7 @@ fn test_locate_path() {
     assert_eq!(path, env_path);
 
     // Allocate
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Locate by ID (resolves to same path)
     let path = locate_path(config, Some(env_id.clone())).unwrap();
@@ -396,7 +396,7 @@ fn test_git_symlink_conversion() {
     assert!(metadata.file_type().is_symlink());
 
     // 2. Allocate (keeps symlink)
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
     let metadata = fs::symlink_metadata(&git_file_path).unwrap();
     assert!(metadata.file_type().is_symlink());
 
@@ -454,7 +454,7 @@ fn test_mtime_and_metadata_preservation() {
     assert!(env_path.join("build/cipd.gni").exists());
 
     // 2. Allocate
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
     
     // Verify index exists
     let index_path = env_info.path.join(".git/index");
@@ -490,7 +490,7 @@ fn test_mtime_and_metadata_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // 4. Allocate again (no-op case)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true).unwrap();
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
 
     // Verify index mtime is preserved after no-op allocate
     let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
@@ -515,7 +515,7 @@ fn test_parent_jiri_update() {
     let env_id = create_environment(config, "mock_config").unwrap();
 
     // 2. Allocate (first time, gets initial revisions)
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Verify initial content
     assert_eq!(fs::read_to_string(env_info.path.join("dummy.txt")).unwrap(), "hello");
@@ -537,7 +537,7 @@ fn test_parent_jiri_update() {
     run_setup_cmd("git", &["commit", "-m", "bump sub"], &parent_sub_path);
 
     // 5. Allocate again (should reuse same slot but update revisions)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true).unwrap();
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id, "Should reuse the same environment slot");
 
     // Verify updated content in workspace
@@ -559,7 +559,7 @@ fn test_prebuilt_isolation() {
     let env_id = create_environment(config, "mock_config").unwrap();
 
     // 2. Allocate Workspace 1 (revision A)
-    let env_info = allocate_environment(config, "mock_config", "test_agent", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Verify Workspace 1 sees version 1 (from mock cipd)
     let ws_prebuilt_file = env_info.path.join("prebuilt/tools/mock_tool/file.txt");
@@ -594,7 +594,7 @@ fn test_prebuilt_isolation() {
     free_environment_by_id(config, &env_info.environment_id).unwrap();
 
     // 5. Allocate Workspace 2 (uses same slot, now at revision B ➔ version 2)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true).unwrap();
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id, "Should reuse the same environment slot");
 
     // Verify Workspace 2 gets version 2 (from mock cipd)
@@ -620,7 +620,7 @@ fn test_wheel_extraction_mtime_preservation() {
     let env_id = create_environment(config, "mock_config").unwrap();
 
     // 2. Allocate Workspace (first run)
-    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
     let pydantic_init = workspace_path.join("prebuilt/third_party/pydantic-core/pydantic_core/__init__.py");
@@ -643,7 +643,7 @@ fn test_wheel_extraction_mtime_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 4. Allocate Workspace again (re-use)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id);
 
     // Check mtime of the input file after re-use
@@ -669,7 +669,7 @@ fn test_jiri_latest_snapshot_isolation() {
 
     // 1. Create and allocate workspace
     let env_id = create_environment(config, "mock_config").unwrap();
-    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
     let ws_latest = workspace_path.join(".jiri_root/update_history/latest");
@@ -698,7 +698,7 @@ fn test_jiri_latest_snapshot_isolation() {
 fn test_existing_cache_clamping_migration() {
     let _lock = TEST_LOCK.lock().unwrap();
     use fxenv::utils::{get_file_mtime, set_file_mtime};
-    use fxenv::allocate::{JiriPackage, calculate_group_hash};
+    use fxenv::sync::{JiriPackage, calculate_group_hash};
     
     let env = setup_mock_env();
     let config = &env.config;
@@ -732,7 +732,7 @@ fn test_existing_cache_clamping_migration() {
     
     // 2. Allocate workspace (this will be a cache hit)
     let env_id = create_environment(config, "mock_config").unwrap();
-    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
     
     let ws_file = workspace_path.join("prebuilt/tools/mock_tool/file_2042.txt");
@@ -759,7 +759,7 @@ fn test_args_gn_mtime_preservation_on_free() {
 
     // 1. Allocate workspace
     let env_id = create_environment(config, "mock_config").unwrap();
-    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
     let args_gn = workspace_path.join("out/default/args.gn");
@@ -793,7 +793,7 @@ fn test_bazel_package_copying() {
 
     // 1. Allocate workspace
     let env_id = create_environment(config, "mock_config").unwrap();
-    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
     // 2. Verify mock_tool is symlinked
@@ -819,7 +819,7 @@ fn test_bazel_package_copying() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 5. Allocate again (re-use)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true).unwrap();
+    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id);
 
     // Verify Bazel was NOT re-copied (mtime preserved)
@@ -831,3 +831,37 @@ fn test_bazel_package_copying() {
     free_environment_by_id(config, &env_info_2.environment_id).unwrap();
     delete_environment(config, &env_id).unwrap();
 }
+
+#[test]
+fn test_nosync_and_sync() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create environment
+    let env_id = create_environment(config, "mock_config").unwrap();
+
+    // 2. Update parent repo (simulate changes that would be pulled during sync)
+    let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
+    fs::write(&parent_dummy, "hello v2").unwrap();
+    run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
+    run_setup_cmd("git", &["commit", "-m", "bump root"], &env.config.fuchsia_dir);
+
+    // 3. Allocate with nosync = true
+    let env_info = allocate_environment(config, "mock_config", "test_agent", false, true).unwrap();
+
+    // Verify that workspace dummy.txt is STILL "hello" (not updated to "hello v2")
+    let ws_dummy = env_info.path.join("dummy.txt");
+    assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello");
+
+    // 4. Run sync
+    fxenv::sync::sync_environment(config, &env_info.environment_id, &env_info.path, true).unwrap();
+
+    // Verify that workspace dummy.txt is now "hello v2" (updated)
+    assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
+
+    // Clean up
+    free_environment_by_id(config, &env_info.environment_id).unwrap();
+    delete_environment(config, &env_id).unwrap();
+}
+

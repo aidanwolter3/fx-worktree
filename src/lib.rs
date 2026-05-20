@@ -12,3 +12,4 @@ pub mod selftest;
 pub mod utils;
 pub mod environment;
 pub mod locate;
+pub mod sync;

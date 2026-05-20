@@ -51,10 +51,11 @@ fxenv create <config_name>
 ```
 
 ### 2. Allocate an Environment (Use)
-Leases a free environment of the config type, cleans it, and updates its Git worktrees to the agent's target revisions.
+Leases a free environment of the config type. By default, it does NOT sync the worktree to the parent's current revision.
 ```bash
-fxenv use <config_name> [--agent-id <agent_name>] [--json]
+fxenv use <config_name> [--agent-id <agent_name>] [--sync] [--json]
 ```
+*   `--sync`: Opt-in to sync the worktree to the parent's current revision, clean it, and download/isolate prebuilts.
 
 *   **Default Output (Human Friendly):**
     ```none
@@ -75,7 +76,13 @@ fxenv use <config_name> [--agent-id <agent_name>] [--json]
     {"environment_id":"fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5","agent_id":"agent-2f26359d","config":"fuchsia_internal.x64","pid":2549294,"timestamp_sec":1779221652,"path":"/home/user/.fuchsia-agents/environments/fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95-16d74d9788a5"}
     ```
 
-### 3. List Environments
+### 3. Sync an Environment
+Updates an environment (even if in use) to the parent's current revisions, cleans it, and updates prebuilts.
+```bash
+fxenv sync <environment_id>
+```
+
+### 4. List Environments
 Shows all environments in the pool and their lease status.
 ```bash
 fxenv list [--json]
@@ -88,19 +95,19 @@ fxenv list [--json]
     fuchsia_internal.x64   fuchsia_internal.x64_d704c897-f2f2-4a6b-8a95...    In Use (agent_1)
     ```
 
-### 4. Free an Environment
+### 5. Free an Environment
 Cleans the environment (resets git, runs `git clean` excluding the build cache in `out/`) and releases the lease.
 ```bash
 fxenv free <environment_id> [--json]
 ```
 
-### 5. Delete an Environment
+### 6. Delete an Environment
 Completely removes the environment from disk and unregisters the worktrees.
 ```bash
 fxenv delete <environment_id>
 ```
 
-### 6. Change Directory into Environment
+### 7. Change Directory into Environment
 Cds into the environment folder (resolves ID or short suffix, falls back to the last allocated environment if omitted).
 ```bash
 fxenv cd [environment_id]
