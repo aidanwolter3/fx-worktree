@@ -52,12 +52,12 @@ pub fn sync_environment(
     }
 
     if !quiet {
-        println!("Syncing environment {}...", env_id);
+        eprintln!("Syncing environment {}...", env_id);
     }
 
     // 1. Query target Jiri state from base repo
     if !quiet {
-        println!("Querying Fuchsia project structure...");
+        eprintln!("Querying Fuchsia project structure...");
     }
     let temp_jiri_json = std::env::temp_dir().join(format!("jiri_{}.json", Uuid::new_v4()));
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
@@ -126,7 +126,7 @@ pub fn sync_environment(
     // 2. Clean and checkout root project (exclude out/ and markers)
     if let Some(root) = root_project {
         if !quiet {
-            println!("Updating Git worktrees to target revisions...");
+            eprintln!("Updating Git worktrees to target revisions...");
         }
         clean_worktree(workspace_path, true)?;
         run_command("git", &["checkout", &root.revision], workspace_path, &[])?;
@@ -260,7 +260,7 @@ fn resolve_and_download_prebuilts(
     quiet: bool,
 ) -> Result<()> {
     if !quiet {
-        println!("Resolving and isolating prebuilts...");
+        eprintln!("Resolving and isolating prebuilts...");
     }
 
     let ws_prebuilt = workspace_path.join("prebuilt");
@@ -273,7 +273,7 @@ fn resolve_and_download_prebuilts(
     }
 
     if !quiet {
-        println!("  Querying package list (running jiri package)...");
+        eprintln!("  Querying package list (running jiri package)...");
     }
     let temp_json = std::env::temp_dir().join(format!("packages_{}.json", Uuid::new_v4()));
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
@@ -298,7 +298,7 @@ fn resolve_and_download_prebuilts(
         serde_json::from_str(&json_content).context("Failed to parse Jiri packages JSON")?;
 
     if !quiet {
-        println!("  Loading lockfiles...");
+        eprintln!("  Loading lockfiles...");
     }
     let lock_map = load_lockfiles(workspace_path)?;
     let host_platform = get_cipd_platform();
@@ -371,7 +371,7 @@ fn resolve_and_download_prebuilts(
 
     if !missing_subdirs.is_empty() {
         if !quiet {
-            println!(
+            eprintln!(
                 "  Downloading missing prebuilt packages (cache miss for {} paths)...",
                 missing_subdirs.len()
             );
@@ -412,7 +412,7 @@ fn resolve_and_download_prebuilts(
     }
 
     if !quiet {
-        println!("  Creating package symlinks in workspace...");
+        eprintln!("  Creating package symlinks in workspace...");
     }
     let mut updated_symlinks = std::collections::HashSet::new();
     for (ws_path, cache_path) in symlinks_to_create {
@@ -453,7 +453,7 @@ fn resolve_and_download_prebuilts(
 
         if needs_copy {
             if !quiet {
-                println!("  Copying isolated Bazel package to workspace...");
+                eprintln!("  Copying isolated Bazel package to workspace...");
             }
             if ws_path.exists() {
                 if ws_path.is_symlink() {
@@ -476,7 +476,7 @@ fn resolve_and_download_prebuilts(
         && (updated_symlinks.contains(&pydantic_wheel) || !pydantic_dest.exists())
     {
         if !quiet {
-            println!("  Extracting pydantic-core wheel...");
+            eprintln!("  Extracting pydantic-core wheel...");
         }
         run_command(pydantic_script.to_str().unwrap(), &[], workspace_path, &[])
             .context("Failed to run extract_pydantic_core_wheel.sh")?;
@@ -489,7 +489,7 @@ fn resolve_and_download_prebuilts(
         && (updated_symlinks.contains(&protobuf_wheel) || !protobuf_dest.exists())
     {
         if !quiet {
-            println!("  Extracting protobuf-py3 wheel...");
+            eprintln!("  Extracting protobuf-py3 wheel...");
         }
         run_command(protobuf_script.to_str().unwrap(), &[], workspace_path, &[])
             .context("Failed to run extract_protobuf_py3_wheel.sh")?;

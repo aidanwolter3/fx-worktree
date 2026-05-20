@@ -1,6 +1,8 @@
 use crate::config::Config;
-use crate::utils::{find_worktrees, clean_worktree, get_file_mtime, set_file_mtime, copy_file_if_different};
 use crate::environment::EnvironmentInfo;
+use crate::utils::{
+    clean_worktree, copy_file_if_different, find_worktrees, get_file_mtime, set_file_mtime,
+};
 use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
 use std::fs;
@@ -15,7 +17,10 @@ pub fn release_worktree_by_id(config: &Config, id: &str) -> Result<()> {
     let lease_file_path = config.leases_dir().join(&lease_file_name);
 
     if !lease_file_path.exists() {
-        return Err(anyhow!("Worktree lease file {:?} does not exist", lease_file_path));
+        return Err(anyhow!(
+            "Worktree lease file {:?} does not exist",
+            lease_file_path
+        ));
     }
 
     let env_json = fs::read_to_string(&lease_file_path)
@@ -72,9 +77,8 @@ pub fn release_worktree_internal(env_info: &EnvironmentInfo) -> Result<()> {
         let args_gn = out_dir.join("args.gn");
         if args_gn_ref.exists() {
             log::info!("Restoring args.gn from args.gn.ref");
-            copy_file_if_different(&args_gn_ref, &args_gn).with_context(|| {
-                format!("Failed to copy {:?} to {:?}", args_gn_ref, args_gn)
-            })?;
+            copy_file_if_different(&args_gn_ref, &args_gn)
+                .with_context(|| format!("Failed to copy {:?} to {:?}", args_gn_ref, args_gn))?;
         }
     }
 
@@ -88,13 +92,15 @@ fn clean_workspace(workspace_path: &Path) -> Result<()> {
     log::info!("Cleaning up workspace at {:?}", workspace_path);
 
     let worktrees = find_worktrees(workspace_path)?;
-    worktrees.par_iter().try_for_each(|worktree_path| -> Result<()> {
-        let is_root = worktree_path == workspace_path;
-        if let Err(e) = clean_worktree(worktree_path, is_root) {
-            log::error!("Failed to clean worktree {:?}: {:?}", worktree_path, e);
-        }
-        Ok(())
-    })?;
+    worktrees
+        .par_iter()
+        .try_for_each(|worktree_path| -> Result<()> {
+            let is_root = worktree_path == workspace_path;
+            if let Err(e) = clean_worktree(worktree_path, is_root) {
+                log::error!("Failed to clean worktree {:?}: {:?}", worktree_path, e);
+            }
+            Ok(())
+        })?;
 
     Ok(())
 }

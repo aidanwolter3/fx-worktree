@@ -3,10 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::lease::lease_environment;
 use crate::config::Config;
-use crate::remove::remove_environment;
+use crate::lease::lease_environment;
 use crate::release::release_worktree_by_id;
+use crate::remove::remove_environment;
 use crate::utils::run_command;
 
 pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
@@ -64,10 +64,7 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
         // It's a path
         let path = PathBuf::from(&env_id_or_path);
         if !path.exists() {
-            return Err(anyhow!(
-                "Specified worktree path {:?} does not exist",
-                path
-            ));
+            return Err(anyhow!("Specified worktree path {:?} does not exist", path));
         }
         let id = path.file_name().unwrap().to_str().unwrap().to_string();
         let temp_env_dir = test_config.environments_dir().join(&id);
@@ -142,9 +139,8 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
 
         // 3. Lease the worktree (leases it and updates revisions)
         println!("Leasing worktree (updating Git worktrees)...");
-        let env_info =
-            lease_environment(test_config, config_name, "self_test_agent", true, false)
-                .context("Failed to lease worktree")?;
+        let env_info = lease_environment(test_config, config_name, "self_test_agent", true, false)
+            .context("Failed to lease worktree")?;
         println!("Leased worktree: {:?}", env_info.path);
         leased = true;
 
@@ -215,7 +211,7 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     }
 
     if should_remove_worktree {
-        remove_environment(test_config, &env_id).context("Failed to remove worktree")?;
+        remove_environment(test_config, &env_id, false).context("Failed to remove worktree")?;
     } else {
         println!("Skipping worktree removal (reused worktree)");
     }

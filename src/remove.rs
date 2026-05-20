@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::Path;
 
-pub fn remove_environment(config: &Config, id: &str) -> Result<()> {
+pub fn remove_environment(config: &Config, id: &str, quiet: bool) -> Result<()> {
     if std::path::Path::new(id).components().count() > 1 {
         return Err(anyhow!("Invalid worktree ID: {}", id));
     }
@@ -19,7 +19,10 @@ pub fn remove_environment(config: &Config, id: &str) -> Result<()> {
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lease") {
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                     if file_name.ends_with(&suffix) {
-                        return Err(anyhow!("Cannot remove worktree {} because it is currently in use (leased).", id));
+                        return Err(anyhow!(
+                            "Cannot remove worktree {} because it is currently in use (leased).",
+                            id
+                        ));
                     }
                 }
             }
@@ -28,31 +31,44 @@ pub fn remove_environment(config: &Config, id: &str) -> Result<()> {
 
     let env_path = config.environments_dir().join(id);
     if !env_path.exists() {
-        return Err(anyhow!("Environment {} does not exist at {:?}", id, env_path));
+        return Err(anyhow!(
+            "Environment {} does not exist at {:?}",
+            id,
+            env_path
+        ));
     }
 
-    println!("Deleting environment {}...", id);
+    if !quiet {
+        eprintln!("Deleting environment {}...", id);
+    }
 
     // 2. Scan and restore .git files to regular files so git worktree remove can validate them
     let worktrees = find_worktrees(&env_path)?;
     for worktree_path in &worktrees {
         if let Err(e) = restore_git_file(worktree_path) {
-            log::warn!("Failed to restore .git file at {:?}: {:?}", worktree_path, e);
+            log::warn!(
+                "Failed to restore .git file at {:?}: {:?}",
+                worktree_path,
+                e
+            );
         }
     }
 
     // 3. Remove git worktrees in reverse depth order
     for worktree_path in &worktrees {
         if let Err(e) = remove_worktree(config, &env_path, worktree_path) {
-            log::warn!("Failed to remove git worktree at {:?}: {:?}", worktree_path, e);
+            log::warn!(
+                "Failed to remove git worktree at {:?}: {:?}",
+                worktree_path,
+                e
+            );
         }
     }
 
     // 4. Delete directory from disk
     if env_path.exists() {
-        fs::remove_dir_all(&env_path).with_context(|| {
-            format!("Failed to delete environment directory {:?}", env_path)
-        })?;
+        fs::remove_dir_all(&env_path)
+            .with_context(|| format!("Failed to delete environment directory {:?}", env_path))?;
     }
 
     Ok(())
@@ -66,7 +82,10 @@ fn remove_worktree(config: &Config, env_root: &Path, worktree_path: &Path) -> Re
     let base_repo_path = config.fuchsia_dir.join(rel_path);
 
     if !base_repo_path.exists() {
-        return Err(anyhow!("Base repository {:?} does not exist", base_repo_path));
+        return Err(anyhow!(
+            "Base repository {:?} does not exist",
+            base_repo_path
+        ));
     }
 
     log::info!("Removing git worktree at {:?}", worktree_path);
@@ -97,8 +116,11 @@ fn restore_git_file(repo_path: &Path) -> Result<()> {
                 .with_context(|| format!("Failed to read link {:?}", git_file_path))?;
             fs::remove_file(&git_file_path)
                 .with_context(|| format!("Failed to delete symlink {:?}", git_file_path))?;
-            fs::write(&git_file_path, format!("gitdir: {}\n", gitdir_path.to_string_lossy()))
-                .with_context(|| format!("Failed to write .git file at {:?}", git_file_path))?;
+            fs::write(
+                &git_file_path,
+                format!("gitdir: {}\n", gitdir_path.to_string_lossy()),
+            )
+            .with_context(|| format!("Failed to write .git file at {:?}", git_file_path))?;
         }
     }
     Ok(())

@@ -19,22 +19,46 @@ pub fn locate_path(config: &Config, id: Option<String>) -> Result<PathBuf> {
         return Ok(env_path);
     }
 
-    // 2. Scan to see if it matches a suffix (like out_uuid or uuid)
-    let uuid = id.strip_prefix("out_").unwrap_or(&id);
-    let suffix = format!("_{}", uuid);
+    // 2. Scan to find matches (prefix of full ID, or prefix of UUID part)
+    let mut matches = Vec::new();
     if config.environments_dir().exists() {
         for entry in fs::read_dir(config.environments_dir())? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if dir_name.ends_with(&suffix) || dir_name.ends_with(&id) {
+                    if dir_name == id {
+                        // Double check exact match just in case
                         return Ok(path);
+                    }
+
+                    if dir_name.starts_with(&id) {
+                        matches.push((dir_name.to_string(), path.clone()));
+                        continue;
+                    }
+
+                    if let Some((_cfg, uuid_part)) = dir_name.rsplit_once('_') {
+                        if uuid_part.starts_with(&id) {
+                            matches.push((dir_name.to_string(), path));
+                        }
                     }
                 }
             }
         }
     }
 
-    Err(anyhow!("Worktree ID {} not found", id))
+    if matches.is_empty() {
+        return Err(anyhow!("Worktree ID {} not found", id));
+    }
+
+    if matches.len() > 1 {
+        let match_ids: Vec<String> = matches.iter().map(|(id, _)| id.clone()).collect();
+        return Err(anyhow!(
+            "Ambiguous worktree ID '{}'. Matches: {}",
+            id,
+            match_ids.join(", ")
+        ));
+    }
+
+    Ok(matches.remove(0).1)
 }

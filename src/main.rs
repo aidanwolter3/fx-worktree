@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use fx_worktree::cli::{Cli, Commands};
 use fx_worktree::config::Config;
-use fx_worktree::{add, remove, lease, release, list, locate, selftest, sync};
+use fx_worktree::{add, lease, list, locate, release, remove, selftest, sync};
 
 fn main() -> Result<()> {
     // Initialize logger (default to warn to silence info logs by default)
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
         Commands::Add { config: cfg } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            let env_id = add::add_environment(&config, &cfg)?;
+            let env_id = add::add_environment(&config, &cfg, cli.json)?;
             if cli.json {
                 println!(
                     "{{\"environment_id\":\"{}\",\"config\":\"{}\"}}",
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
         Commands::Remove { id } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            remove::remove_environment(&config, &id)?;
+            remove::remove_environment(&config, &id, cli.json)?;
             if cli.json {
                 println!("{{\"removed\":true,\"environment_id\":\"{}\"}}", id);
             } else {
@@ -61,6 +61,7 @@ fn main() -> Result<()> {
             config: cfg,
             agent_id,
             sync,
+            print_path_only,
         } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
@@ -68,17 +69,24 @@ fn main() -> Result<()> {
                 let uuid = uuid::Uuid::new_v4().to_string();
                 format!("agent-{}", &uuid[0..8])
             });
-            let env_info =
-                lease::lease_environment(&config, &cfg, &agent_id, sync, cli.json)?;
+            let env_info = lease::lease_environment(
+                &config,
+                &cfg,
+                &agent_id,
+                sync,
+                cli.json || print_path_only,
+            )?;
             if cli.json {
                 let json = serde_json::to_string(&env_info)?;
                 println!("{}", json);
+            } else if print_path_only {
+                println!("{}", env_info.path.to_string_lossy());
             } else {
                 println!("✔ Worktree leased successfully!\n");
-                println!("  ℹ Worktree ID    : {}", env_info.environment_id);
-                println!("  ℹ Agent ID       : {}", env_info.agent_id);
-                println!("  ℹ Config         : {}", env_info.config);
-                println!("  ℹ Path           : {}", env_info.path.to_string_lossy());
+                println!("  Worktree ID  : {}", env_info.environment_id);
+                println!("  Agent ID     : {}", env_info.agent_id);
+                println!("  Config       : {}", env_info.config);
+                println!("  Path         : {}", env_info.path.to_string_lossy());
                 println!("\nTo change directory into the worktree:");
                 println!(
                     "  $ fx-worktree cd {}  # Navigate to this specific worktree",

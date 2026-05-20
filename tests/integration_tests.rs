@@ -5,12 +5,12 @@ use std::process::Command;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-use fx_worktree::lease::lease_environment;
-use fx_worktree::config::Config;
 use fx_worktree::add::add_environment;
-use fx_worktree::remove::remove_environment;
-use fx_worktree::release::release_worktree_by_id;
+use fx_worktree::config::Config;
+use fx_worktree::lease::lease_environment;
 use fx_worktree::list::list_environments;
+use fx_worktree::release::release_worktree_by_id;
+use fx_worktree::remove::remove_environment;
 use fx_worktree::selftest::run_self_test;
 
 // Global lock to serialize tests
@@ -298,7 +298,7 @@ fn test_full_lifecycle() {
     let config = &env.config;
 
     // 1. Test Environment Create
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_path = config.environments_dir().join(&env_id);
     assert!(env_path.exists());
     assert!(env_path.join("out/default/args.gn").exists());
@@ -324,7 +324,7 @@ fn test_full_lifecycle() {
     list_environments(config, false).unwrap();
 
     // Test that we cannot delete the environment while leased
-    let delete_res = remove_environment(config, &env_id);
+    let delete_res = remove_environment(config, &env_id, false);
     assert!(delete_res.is_err());
     assert!(
         delete_res
@@ -343,14 +343,12 @@ fn test_full_lifecycle() {
     list_environments(config, false).unwrap();
 
     // 4. Test Worktree Remove (fully cleans up)
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
     assert!(!env_path.exists()); // Directory is gone now
 
     println!("--- List Worktrees after remove ---");
     list_environments(config, false).unwrap();
 }
-
-
 
 #[test]
 fn test_locate_path() {
@@ -363,7 +361,7 @@ fn test_locate_path() {
     assert!(locate_path(config, None).is_err());
 
     // Create environment
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_path = config.environments_dir().join(&env_id);
 
     // Locate by ID
@@ -393,7 +391,7 @@ fn test_git_symlink_conversion() {
     let config = &env.config;
 
     // 1. Create environment (runs worktree add and converts .git to symlink)
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_path = config.environments_dir().join(&env_id);
 
     let git_file_path = env_path.join(".git");
@@ -412,7 +410,7 @@ fn test_git_symlink_conversion() {
     assert!(metadata.file_type().is_symlink());
 
     // 4. Delete (converts it back to file, and removes it)
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
     assert!(!env_path.exists());
 }
 
@@ -423,7 +421,7 @@ fn test_self_test_command() {
     let config = &env.config;
 
     // Create environment first to get an ID
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
 
     let build_gn = config.fuchsia_dir.join("BUILD.gn");
     fs::write(&build_gn, "# mock root BUILD.gn").unwrap();
@@ -446,7 +444,7 @@ fn test_mtime_and_metadata_preservation() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_path = config.environments_dir().join(&env_id);
 
     // Verify metadata files were copied during create
@@ -513,8 +511,7 @@ fn test_mtime_and_metadata_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // 4. Allocate again (no-op case)
-    let env_info_2 =
-        lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
 
     // Verify index mtime is preserved after no-op allocate
     let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
@@ -532,7 +529,7 @@ fn test_mtime_and_metadata_preservation() {
 
     // Clean up
     release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -542,7 +539,7 @@ fn test_parent_jiri_update() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
 
     // 2. Allocate (first time, gets initial revisions)
     let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
@@ -577,8 +574,7 @@ fn test_parent_jiri_update() {
     run_setup_cmd("git", &["commit", "-m", "bump sub"], &parent_sub_path);
 
     // 5. Allocate again (should reuse same slot but update revisions)
-    let env_info_2 =
-        lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
     assert_eq!(
         env_info_2.environment_id, env_id,
         "Should reuse the same environment slot"
@@ -596,7 +592,7 @@ fn test_parent_jiri_update() {
 
     // Clean up
     release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -606,7 +602,7 @@ fn test_prebuilt_isolation() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
 
     // 2. Allocate Workspace 1 (revision A)
     let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
@@ -651,8 +647,7 @@ fn test_prebuilt_isolation() {
     release_worktree_by_id(config, &env_info.environment_id).unwrap();
 
     // 5. Allocate Workspace 2 (uses same slot, now at revision B ➔ version 2)
-    let env_info_2 =
-        lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
     assert_eq!(
         env_info_2.environment_id, env_id,
         "Should reuse the same environment slot"
@@ -667,7 +662,7 @@ fn test_prebuilt_isolation() {
 
     // Clean up
     release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -678,7 +673,7 @@ fn test_wheel_extraction_mtime_preservation() {
     let config = &env.config;
 
     // 1. Create a persistent environment
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
 
     // 2. Allocate Workspace (first run)
     let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
@@ -710,8 +705,7 @@ fn test_wheel_extraction_mtime_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 4. Allocate Workspace again (re-use)
-    let env_info_2 =
-        lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_info_2 = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id);
 
     // Check mtime of the input file after re-use
@@ -728,7 +722,7 @@ fn test_wheel_extraction_mtime_preservation() {
 
     // Clean up
     release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -739,7 +733,7 @@ fn test_jiri_latest_snapshot_isolation() {
     let config = &env.config;
 
     // 1. Create and allocate workspace
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
@@ -768,7 +762,7 @@ fn test_jiri_latest_snapshot_isolation() {
 
     // Clean up
     release_worktree_by_id(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -807,7 +801,7 @@ fn test_existing_cache_clamping_migration() {
     set_file_mtime(&file_2042, future_time).unwrap();
 
     // 2. Allocate workspace (this will be a cache hit)
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
@@ -827,7 +821,7 @@ fn test_existing_cache_clamping_migration() {
 
     // Clean up
     release_worktree_by_id(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -838,7 +832,7 @@ fn test_args_gn_mtime_preservation_on_free() {
     let config = &env.config;
 
     // 1. Allocate workspace
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
@@ -864,7 +858,7 @@ fn test_args_gn_mtime_preservation_on_free() {
     );
 
     // Clean up
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -875,7 +869,7 @@ fn test_bazel_package_copying() {
     let config = &env.config;
 
     // 1. Allocate workspace
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
     let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
@@ -911,8 +905,7 @@ fn test_bazel_package_copying() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 5. Allocate again (re-use)
-    let env_info_2 =
-        lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_info_2 = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id);
 
     // Verify Bazel was NOT re-copied (mtime preserved)
@@ -925,7 +918,7 @@ fn test_bazel_package_copying() {
 
     // Clean up
     release_worktree_by_id(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -935,7 +928,7 @@ fn test_nosync_and_sync() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config").unwrap();
+    let env_id = add_environment(config, "mock_config", false).unwrap();
 
     // 2. Update parent repo (simulate changes that would be pulled during sync)
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
@@ -962,7 +955,7 @@ fn test_nosync_and_sync() {
 
     // Clean up
     release_worktree_by_id(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id).unwrap();
+    remove_environment(config, &env_id, false).unwrap();
 }
 
 #[test]
@@ -976,8 +969,8 @@ fn test_invalid_id_validation() {
     assert!(fx_worktree::locate::locate_path(config, Some("/absolute/path".to_string())).is_err());
 
     // Test remove_environment with invalid IDs
-    assert!(remove_environment(config, "../invalid").is_err());
-    assert!(remove_environment(config, "/absolute/path").is_err());
+    assert!(remove_environment(config, "../invalid", false).is_err());
+    assert!(remove_environment(config, "/absolute/path", false).is_err());
 
     // Test release_worktree_by_id with invalid IDs
     assert!(release_worktree_by_id(config, "../invalid").is_err());

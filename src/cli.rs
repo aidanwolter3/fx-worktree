@@ -54,6 +54,9 @@ pub enum Commands {
         /// Sync the worktree to the latest code
         #[arg(long)]
         sync: bool,
+        /// Print only the path of the leased worktree
+        #[arg(long, short)]
+        print_path_only: bool,
     },
     /// Update a worktree to the latest code in the main fuchsia checkout
     Sync {

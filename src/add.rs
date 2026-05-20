@@ -14,12 +14,14 @@ struct JiriProject {
     revision: String,
 }
 
-pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
+pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Result<String> {
     let uuid = Uuid::new_v4().to_string();
-    let env_id = format!("{}_{}", config_name, uuid);
+    let env_id = format!("{}_{}", config_name, &uuid[0..8]);
     let env_path = config.environments_dir().join(&env_id);
 
-    println!("Adding worktree {}...", env_id);
+    if !quiet {
+        eprintln!("Adding worktree {}...", env_id);
+    }
 
     // 1. Create directory structure
     fs::create_dir_all(&env_path)
@@ -31,17 +33,16 @@ pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
         let _ = fs::remove_dir_all(&env_path);
     };
 
-    if let Err(e) = provision_workspace(config, &env_path) {
+    if let Err(e) = provision_workspace(config, &env_path, quiet) {
         cleanup();
         return Err(e);
     }
 
     // Run sync to get prebuilts and ensure correct revisions (required for fx set)
-    if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, false) {
+    if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
         cleanup();
         return Err(e);
     }
-
 
     // 2. Create physical out/default
     let out_dir = env_path.join("out/default");
@@ -54,7 +55,9 @@ pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
         .with_context(|| format!("Failed to write {:?}", fx_build_dir_file))?;
 
     // 4. Run fx set in the workspace
-    println!("Running fx set {}...", config_name);
+    if !quiet {
+        eprintln!("Running fx set {}...", config_name);
+    }
     let fx_bin = env_path.join("scripts/fx");
     let fx_cmd = if fx_bin.exists() {
         fx_bin.to_str().unwrap()
@@ -64,12 +67,7 @@ pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
 
     run_command(
         fx_cmd,
-        &[
-            "--dir",
-            "out/default",
-            "set",
-            config_name,
-        ],
+        &["--dir", "out/default", "set", config_name],
         &env_path,
         &[],
     )
@@ -79,9 +77,8 @@ pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
     let args_gn = out_dir.join("args.gn");
     let args_gn_ref = out_dir.join("args.gn.ref");
     if args_gn.exists() {
-        fs::copy(&args_gn, &args_gn_ref).with_context(|| {
-            format!("Failed to snapshot {:?} to {:?}", args_gn, args_gn_ref)
-        })?;
+        fs::copy(&args_gn, &args_gn_ref)
+            .with_context(|| format!("Failed to snapshot {:?} to {:?}", args_gn, args_gn_ref))?;
         log::info!("Created args.gn.ref");
     } else {
         log::warn!("args.gn not found after fx set. This might happen if fx set was mocked.");
@@ -96,9 +93,11 @@ pub fn add_environment(config: &Config, config_name: &str) -> Result<String> {
     Ok(env_id)
 }
 
-fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
+fn provision_workspace(config: &Config, workspace_path: &Path, quiet: bool) -> Result<()> {
     // 1. Parse Jiri State from base repository
-    println!("Querying Fuchsia project structure...");
+    if !quiet {
+        eprintln!("Querying Fuchsia project structure...");
+    }
     let temp_jiri_json = std::env::temp_dir().join(format!("jiri_{}.json", Uuid::new_v4()));
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
     let jiri_cmd = if jiri_bin.exists() {
@@ -116,7 +115,8 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
     .context("Failed to run jiri project in base repo")?;
 
     let jiri_json = fs::read_to_string(&temp_jiri_json).context("Failed to read jiri json")?;
-    let projects: Vec<JiriProject> = serde_json::from_str(&jiri_json).context("Failed to parse Jiri JSON")?;
+    let projects: Vec<JiriProject> =
+        serde_json::from_str(&jiri_json).context("Failed to parse Jiri JSON")?;
     let _ = fs::remove_file(&temp_jiri_json);
 
     let mut root_project = None;
@@ -181,8 +181,14 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
 
     // 3. Provision sub-projects group by group in parallel
     for (depth, group) in groups {
-        log::info!("Provisioning sub-projects at depth {} (count: {})...", depth, group.len());
-        println!("Provisioning Git worktrees at depth {}...", depth);
+        log::info!(
+            "Provisioning sub-projects at depth {} (count: {})...",
+            depth,
+            group.len()
+        );
+        if !quiet {
+            eprintln!("Provisioning Git worktrees at depth {}...", depth);
+        }
         group.par_iter().try_for_each(|project| -> Result<()> {
             let rel_path = Path::new(&project.path)
                 .strip_prefix(&config.fuchsia_dir)
@@ -216,11 +222,16 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
     }
 
     // 4. Isolate Toolchains (Symlink prebuilts & copy generated files)
-    println!("Isolating toolchains...");
+    if !quiet {
+        eprintln!("Isolating toolchains...");
+    }
 
     let workspace_prebuilt = workspace_path.join("prebuilt");
     fs::create_dir_all(&workspace_prebuilt).with_context(|| {
-        format!("Failed to create prebuilt directory {:?}", workspace_prebuilt)
+        format!(
+            "Failed to create prebuilt directory {:?}",
+            workspace_prebuilt
+        )
     })?;
 
     // Copy Jiri generated files
@@ -228,5 +239,3 @@ fn provision_workspace(config: &Config, workspace_path: &Path) -> Result<()> {
 
     Ok(())
 }
-
-

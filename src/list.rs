@@ -91,7 +91,7 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
 
     // 3. Print pretty table
     let mut max_config = 6; // "CONFIG".len()
-    let mut max_id = 11;     // "WORKTREE ID".len()
+    let mut max_id = 11; // "WORKTREE ID".len()
     for entry in &env_entries {
         max_config = max_config.max(entry.config.len());
         max_id = max_id.max(entry.worktree_id.len());

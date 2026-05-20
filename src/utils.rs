@@ -1,8 +1,8 @@
+use crate::config::Config;
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::config::Config;
 
 pub fn run_command(
     cmd: &str,
@@ -41,22 +41,36 @@ pub fn run_command(
 
 pub fn clean_worktree(worktree_path: &Path, is_root: bool) -> Result<()> {
     // Refresh index to prevent git from touching clean files during reset
-    let _ = run_command("git", &["update-index", "--refresh", "-q"], worktree_path, &[]);
+    let _ = run_command(
+        "git",
+        &["update-index", "--refresh", "-q"],
+        worktree_path,
+        &[],
+    );
 
     run_command("git", &["reset", "--hard"], worktree_path, &[])?;
 
     let mut clean_args = vec!["clean", "-fdx"];
     if is_root {
         clean_args.extend_from_slice(&[
-            "-e", ".fx-worktree-completed",
-            "-e", "prebuilt",
-            "-e", ".jiri_root",
-            "-e", ".fx-build-dir",
-            "-e", "out", // Preserves build cache!
-            "-e", "sdk/ctf/build/internal/ctf_releases.gni",
-            "-e", "build/info/jiri_generated",
-            "-e", "build/cipd.gni",
-            "-e", ".jiri_manifest",
+            "-e",
+            ".fx-worktree-completed",
+            "-e",
+            "prebuilt",
+            "-e",
+            ".jiri_root",
+            "-e",
+            ".fx-build-dir",
+            "-e",
+            "out", // Preserves build cache!
+            "-e",
+            "sdk/ctf/build/internal/ctf_releases.gni",
+            "-e",
+            "build/info/jiri_generated",
+            "-e",
+            "build/cipd.gni",
+            "-e",
+            ".jiri_manifest",
         ]);
     }
 
@@ -152,7 +166,9 @@ fn find_worktrees_recursive(dir: &Path, worktrees: &mut Vec<PathBuf>) -> Result<
 
 pub fn copy_toolchain_metadata(config: &Config, workspace_path: &Path) -> Result<()> {
     // Copy CTF releases
-    let base_ctf_releases = config.fuchsia_dir.join("sdk/ctf/build/internal/ctf_releases.gni");
+    let base_ctf_releases = config
+        .fuchsia_dir
+        .join("sdk/ctf/build/internal/ctf_releases.gni");
     let workspace_ctf_releases = workspace_path.join("sdk/ctf/build/internal/ctf_releases.gni");
     if base_ctf_releases.exists() {
         copy_file_if_different(&base_ctf_releases, &workspace_ctf_releases)?;
@@ -188,7 +204,7 @@ pub fn copy_toolchain_metadata(config: &Config, workspace_path: &Path) -> Result
     // and copy the config and latest snapshot as static files.
     let base_jiri_root = config.fuchsia_dir.join(".jiri_root");
     let ws_jiri_root = workspace_path.join(".jiri_root");
-    
+
     if ws_jiri_root.is_symlink() {
         fs::remove_file(&ws_jiri_root)?;
     }
@@ -224,9 +240,11 @@ use std::fs::{File, FileTimes};
 use std::time::SystemTime;
 
 pub fn get_file_mtime(path: &Path) -> Result<SystemTime> {
-    let metadata = fs::metadata(path)
-        .with_context(|| format!("Failed to get metadata for {:?}", path))?;
-    metadata.modified().with_context(|| format!("Failed to get mtime for {:?}", path))
+    let metadata =
+        fs::metadata(path).with_context(|| format!("Failed to get metadata for {:?}", path))?;
+    metadata
+        .modified()
+        .with_context(|| format!("Failed to get mtime for {:?}", path))
 }
 
 pub fn set_file_mtime(path: &Path, mtime: SystemTime) -> Result<()> {
@@ -289,8 +307,12 @@ pub fn convert_gitdir_to_symlink(target_path: &Path) -> Result<()> {
             if parent_jiri.exists() {
                 let ws_jiri = abs_gitdir.join("jiri");
                 if !ws_jiri.exists() {
-                    std::os::unix::fs::symlink(&parent_jiri, &ws_jiri)
-                        .with_context(|| format!("Failed to symlink Jiri metadata from {:?} to {:?}", parent_jiri, ws_jiri))?;
+                    std::os::unix::fs::symlink(&parent_jiri, &ws_jiri).with_context(|| {
+                        format!(
+                            "Failed to symlink Jiri metadata from {:?} to {:?}",
+                            parent_jiri, ws_jiri
+                        )
+                    })?;
                 }
             }
         }

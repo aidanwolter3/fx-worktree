@@ -77,7 +77,10 @@ pub fn lease_environment(
     }
 
     if acquired_lease.is_none() {
-        return Err(anyhow!("No free environments available for config {}.", config_name));
+        return Err(anyhow!(
+            "No free environments available for config {}.",
+            config_name
+        ));
     }
 
     let lease_file_path = acquired_lease.unwrap();
@@ -96,7 +99,8 @@ pub fn lease_environment(
     };
 
     // Write lease info
-    let env_json = serde_json::to_string(&env_info).context("Failed to serialize EnvironmentInfo")?;
+    let env_json =
+        serde_json::to_string(&env_info).context("Failed to serialize EnvironmentInfo")?;
     fs::write(&lease_file_path, env_json).context("Failed to write lease JSON")?;
 
     // Rollback helper on failure

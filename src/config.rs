@@ -51,7 +51,10 @@ impl Config {
         std::fs::create_dir_all(&leases_dir)
             .with_context(|| format!("Failed to create leases directory {:?}", leases_dir))?;
         std::fs::create_dir_all(&environments_dir).with_context(|| {
-            format!("Failed to create environments directory {:?}", environments_dir)
+            format!(
+                "Failed to create environments directory {:?}",
+                environments_dir
+            )
         })?;
 
         Ok(())
