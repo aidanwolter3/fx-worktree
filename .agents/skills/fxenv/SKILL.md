@@ -85,7 +85,7 @@ These commands manage the pool of persistent environments. The build directories
     ```bash
     fxenv self-test [--use-env <env_id>]
     ```
-    Runs a full programmatic verification of the `fxenv` lifecycle (warming, allocation, incremental compiles, cache preservation, and cleanup).
+    Runs a full programmatic verification of the `fxenv` lifecycle (warming, allocation, build regeneration, cache preservation, and cleanup).
 
 *   **Garbage Collection**:
     ```bash

@@ -1,5 +1,8 @@
 use crate::config::Config;
-use crate::utils::{copy_toolchain_metadata, run_command, clean_worktree, find_worktrees, get_file_mtime, set_file_mtime};
+use crate::utils::{
+    clean_worktree, copy_toolchain_metadata, find_worktrees, get_file_mtime, run_command,
+    set_file_mtime,
+};
 use anyhow::{Context, Result, anyhow};
 use rayon::prelude::*;
 use std::fs;
@@ -25,7 +28,17 @@ pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool) -> Result<
     sync_environment(config, id, &path, quiet)
 }
 
-pub fn sync_environment(config: &Config, env_id: &str, workspace_path: &Path, quiet: bool) -> Result<()> {
+pub fn sync_environment(
+    config: &Config,
+    env_id: &str,
+    workspace_path: &Path,
+    quiet: bool,
+) -> Result<()> {
+    let workspace_path_buf = workspace_path
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize workspace path {:?}", workspace_path))?;
+    let workspace_path = &workspace_path_buf;
+
     // Record index mtimes unconditionally at the very start, before any git commands run
     let worktrees = find_worktrees(workspace_path)?;
     let mut index_mtimes = Vec::new();
@@ -63,7 +76,8 @@ pub fn sync_environment(config: &Config, env_id: &str, workspace_path: &Path, qu
     .context("Failed to run jiri project in base repo")?;
 
     let jiri_json = fs::read_to_string(&temp_jiri_json).context("Failed to read jiri json")?;
-    let projects: Vec<JiriProject> = serde_json::from_str(&jiri_json).context("Failed to parse Jiri JSON")?;
+    let projects: Vec<JiriProject> =
+        serde_json::from_str(&jiri_json).context("Failed to parse Jiri JSON")?;
     let _ = fs::remove_file(&temp_jiri_json);
 
     let mut root_project = None;
@@ -84,13 +98,20 @@ pub fn sync_environment(config: &Config, env_id: &str, workspace_path: &Path, qu
         if let Some(root) = &root_project {
             // Check revision
             let current_head = run_command("git", &["rev-parse", "HEAD"], workspace_path, &[])?;
-            let current_head_sha = String::from_utf8_lossy(&current_head.stdout).trim().to_string();
+            let current_head_sha = String::from_utf8_lossy(&current_head.stdout)
+                .trim()
+                .to_string();
             if current_head_sha != root.revision {
                 return Ok(false);
             }
 
             // Check clean
-            let status = run_command("git", &["status", "--porcelain", "-uno"], workspace_path, &[])?;
+            let status = run_command(
+                "git",
+                &["status", "--porcelain", "-uno"],
+                workspace_path,
+                &[],
+            )?;
             if !status.stdout.is_empty() {
                 return Ok(false);
             }
@@ -99,7 +120,8 @@ pub fn sync_environment(config: &Config, env_id: &str, workspace_path: &Path, qu
         } else {
             Ok(false)
         }
-    })().unwrap_or(false);
+    })()
+    .unwrap_or(false);
 
     // 2. Clean and checkout root project (exclude out/ and markers)
     if let Some(root) = root_project {
@@ -114,39 +136,41 @@ pub fn sync_environment(config: &Config, env_id: &str, workspace_path: &Path, qu
     }
 
     // 3. Clean and checkout sub-projects in parallel (exclude out/ if any, though subprojects usually don't have out/)
-    sub_projects.par_iter().try_for_each(|project| -> Result<()> {
-        let rel_path = Path::new(&project.path)
-            .strip_prefix(&config.fuchsia_dir)
-            .context("Failed to strip prefix")?;
-        let target_path = workspace_path.join(rel_path);
+    sub_projects
+        .par_iter()
+        .try_for_each(|project| -> Result<()> {
+            let rel_path = Path::new(&project.path)
+                .strip_prefix(&config.fuchsia_dir)
+                .context("Failed to strip prefix")?;
+            let target_path = workspace_path.join(rel_path);
 
-        if target_path.exists() {
-            clean_worktree(&target_path, false)?;
-            run_command("git", &["checkout", &project.revision], &target_path, &[])?;
-            crate::utils::convert_gitdir_to_symlink(&target_path)?;
-        } else {
-            // New sub-project added to manifest: clone it fresh!
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent)?;
+            if target_path.exists() {
+                clean_worktree(&target_path, false)?;
+                run_command("git", &["checkout", &project.revision], &target_path, &[])?;
+                crate::utils::convert_gitdir_to_symlink(&target_path)?;
+            } else {
+                // New sub-project added to manifest: clone it fresh!
+                if let Some(parent) = target_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                run_command(
+                    "git",
+                    &[
+                        "worktree",
+                        "add",
+                        "-f",
+                        "--detach",
+                        target_path.to_str().unwrap(),
+                        &project.revision,
+                    ],
+                    Path::new(&project.path),
+                    &[],
+                )?;
+                // Convert to symlink
+                crate::utils::convert_gitdir_to_symlink(&target_path)?;
             }
-            run_command(
-                "git",
-                &[
-                    "worktree",
-                    "add",
-                    "-f",
-                    "--detach",
-                    target_path.to_str().unwrap(),
-                    &project.revision,
-                ],
-                Path::new(&project.path),
-                &[],
-            )?;
-            // Convert to symlink
-            crate::utils::convert_gitdir_to_symlink(&target_path)?;
-        }
-        Ok(())
-    })?;
+            Ok(())
+        })?;
 
     // Copy/restore toolchain metadata files deleted by git clean
     copy_toolchain_metadata(config, workspace_path)?;
@@ -194,7 +218,7 @@ fn group_packages_by_path(
             }
         }
         pkg.name = pkg.name.replace("${platform}", host_platform);
-        
+
         let path = PathBuf::from(&pkg.path);
         groups.entry(path).or_insert_with(Vec::new).push(pkg);
     }
@@ -202,15 +226,15 @@ fn group_packages_by_path(
 }
 
 pub fn calculate_group_hash(packages: &[JiriPackage]) -> String {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
-    
+    use std::hash::{Hash, Hasher};
+
     let mut specs = packages
         .iter()
         .map(|pkg| format!("{}:{}", pkg.name, pkg.version))
         .collect::<Vec<String>>();
     specs.sort();
-    
+
     let mut s = DefaultHasher::new();
     specs.hash(&mut s);
     format!("{:016x}", s.finish())
@@ -270,8 +294,8 @@ fn resolve_and_download_prebuilts(
     let json_content = fs::read_to_string(&temp_json).context("Failed to read packages JSON")?;
     let _ = fs::remove_file(&temp_json);
 
-    let packages: Vec<JiriPackage> = serde_json::from_str(&json_content)
-        .context("Failed to parse Jiri packages JSON")?;
+    let packages: Vec<JiriPackage> =
+        serde_json::from_str(&json_content).context("Failed to parse Jiri packages JSON")?;
 
     if !quiet {
         println!("  Loading lockfiles...");
@@ -296,18 +320,27 @@ fn resolve_and_download_prebuilts(
                 .get(&(pkg.name.clone(), pkg.version.clone()))
                 .cloned()
                 .unwrap_or_else(|| {
-                    log::debug!("Package {} (version {}) not found in lockfiles, using tag", pkg.name, pkg.version);
+                    log::debug!(
+                        "Package {} (version {}) not found in lockfiles, using tag",
+                        pkg.name,
+                        pkg.version
+                    );
                     pkg.version.clone()
                 });
             pkg.version = resolved_version;
         }
 
         let hash = calculate_group_hash(&pkgs);
-        
+
         let rel_target_path = abs_target_path
             .strip_prefix(workspace_path)
-            .with_context(|| format!("Package path {:?} is not inside workspace_path {:?}", abs_target_path, workspace_path))?;
-        
+            .with_context(|| {
+                format!(
+                    "Package path {:?} is not inside workspace_path {:?}",
+                    abs_target_path, workspace_path
+                )
+            })?;
+
         let escaped_path = rel_target_path.to_str().unwrap().replace('/', "_");
         let cache_subdir = format!("merged/{}/{}", escaped_path, hash);
         let shared_pkg_dir = shared_prebuilts_dir.join(&cache_subdir);
@@ -323,7 +356,10 @@ fn resolve_and_download_prebuilts(
             fs::write(&marker_file, "")?;
         }
 
-        let is_bazel = rel_target_path.to_str().unwrap().contains("prebuilt/third_party/bazel/");
+        let is_bazel = rel_target_path
+            .to_str()
+            .unwrap()
+            .contains("prebuilt/third_party/bazel/");
         if is_bazel {
             bazel_to_copy.push((ws_target_path, shared_pkg_dir.clone()));
         } else {
@@ -335,10 +371,13 @@ fn resolve_and_download_prebuilts(
 
     if !missing_subdirs.is_empty() {
         if !quiet {
-            println!("  Downloading missing prebuilt packages (cache miss for {} paths)...", missing_subdirs.len());
+            println!(
+                "  Downloading missing prebuilt packages (cache miss for {} paths)...",
+                missing_subdirs.len()
+            );
         }
         let ensure_content = generate_ensure_file_content(&groups_to_ensure);
-        
+
         let temp_ensure = std::env::temp_dir().join(format!("ensure_{}", Uuid::new_v4()));
         fs::write(&temp_ensure, ensure_content)?;
 
@@ -394,8 +433,12 @@ fn resolve_and_download_prebuilts(
             }
         }
 
-        std::os::unix::fs::symlink(&cache_path, &ws_path)
-            .with_context(|| format!("Failed to create symlink from {:?} to {:?}", cache_path, ws_path))?;
+        std::os::unix::fs::symlink(&cache_path, &ws_path).with_context(|| {
+            format!(
+                "Failed to create symlink from {:?} to {:?}",
+                cache_path, ws_path
+            )
+        })?;
         updated_symlinks.insert(ws_path.clone());
     }
 
@@ -429,7 +472,9 @@ fn resolve_and_download_prebuilts(
     let pydantic_wheel = workspace_path.join("prebuilt/third_party/pydantic-core-wheel");
     let pydantic_dest = workspace_path.join("prebuilt/third_party/pydantic-core");
     let pydantic_script = workspace_path.join("tools/build/scripts/extract_pydantic_core_wheel.sh");
-    if pydantic_script.exists() && (updated_symlinks.contains(&pydantic_wheel) || !pydantic_dest.exists()) {
+    if pydantic_script.exists()
+        && (updated_symlinks.contains(&pydantic_wheel) || !pydantic_dest.exists())
+    {
         if !quiet {
             println!("  Extracting pydantic-core wheel...");
         }
@@ -440,7 +485,9 @@ fn resolve_and_download_prebuilts(
     let protobuf_wheel = workspace_path.join("prebuilt/third_party/protobuf-py3-wheel");
     let protobuf_dest = workspace_path.join("prebuilt/third_party/protobuf-py3");
     let protobuf_script = workspace_path.join("tools/build/scripts/extract_protobuf_py3_wheel.sh");
-    if protobuf_script.exists() && (updated_symlinks.contains(&protobuf_wheel) || !protobuf_dest.exists()) {
+    if protobuf_script.exists()
+        && (updated_symlinks.contains(&protobuf_wheel) || !protobuf_dest.exists())
+    {
         if !quiet {
             println!("  Extracting protobuf-py3 wheel...");
         }
@@ -459,7 +506,9 @@ struct LockEntry {
     instance_id: String,
 }
 
-fn load_lockfiles(workspace_path: &Path) -> Result<std::collections::HashMap<(String, String), String>> {
+fn load_lockfiles(
+    workspace_path: &Path,
+) -> Result<std::collections::HashMap<(String, String), String>> {
     let mut lock_map = std::collections::HashMap::new();
     let lockfiles = find_lockfiles(workspace_path)?;
     log::info!("Found {} lockfiles: {:?}", lockfiles.len(), lockfiles);
@@ -494,9 +543,11 @@ fn find_lockfiles_recursive(dir: &Path, lockfiles: &mut Vec<PathBuf>) -> Result<
             let file_type = entry.file_type()?;
             let path = entry.path();
             if file_type.is_dir() {
-                if path.file_name().and_then(|n| n.to_str()).is_some_and(|name| {
-                    name == ".git" || name == "prebuilt" || name == "out"
-                }) {
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| name == ".git" || name == "prebuilt" || name == "out")
+                {
                     continue;
                 }
                 find_lockfiles_recursive(&path, lockfiles)?;
@@ -571,10 +622,7 @@ mod tests {
                 platforms: None,
             },
         ];
-        let pkgs2 = vec![
-            pkgs1[1].clone(),
-            pkgs1[0].clone(),
-        ];
+        let pkgs2 = vec![pkgs1[1].clone(), pkgs1[0].clone()];
 
         let hash1 = calculate_group_hash(&pkgs1);
         let hash2 = calculate_group_hash(&pkgs2);
@@ -586,4 +634,3 @@ mod tests {
         assert_ne!(hash1, hash3);
     }
 }
-

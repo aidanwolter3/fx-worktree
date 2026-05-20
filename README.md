@@ -112,3 +112,11 @@ Cds into the environment folder (resolves ID or short suffix, falls back to the 
 ```bash
 fxenv cd [environment_id]
 ```
+
+### 8. Run Self-Test
+Runs a programmatic verification of the `fxenv` lifecycle (allocation, build regeneration, cache preservation, and cleanup) using an existing environment.
+```bash
+fxenv self-test <environment_id>
+```
+> [!IMPORTANT]
+> The target environment must be "Free" (not leased by any agent) and should ideally be "warmed" (built at least once) to run the test quickly.

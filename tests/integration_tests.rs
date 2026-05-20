@@ -5,10 +5,10 @@ use std::process::Command;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
+use fxenv::allocate::allocate_environment;
 use fxenv::config::Config;
 use fxenv::create::create_environment;
 use fxenv::delete::delete_environment;
-use fxenv::allocate::allocate_environment;
 use fxenv::free::free_environment_by_id;
 use fxenv::gc::garbage_collect;
 use fxenv::list::list_environments;
@@ -46,7 +46,11 @@ fn setup_mock_env() -> TestEnv {
     // 1. Initialize git repo in fuchsia_dir
     run_setup_cmd("git", &["init", "--initial-branch=main"], fuchsia_path);
     run_setup_cmd("git", &["config", "user.name", "Test User"], fuchsia_path);
-    run_setup_cmd("git", &["config", "user.email", "test@example.com"], fuchsia_path);
+    run_setup_cmd(
+        "git",
+        &["config", "user.email", "test@example.com"],
+        fuchsia_path,
+    );
 
     let dummy_file = fuchsia_path.join("dummy.txt");
     fs::write(&dummy_file, "hello").unwrap();
@@ -67,7 +71,11 @@ fn setup_mock_env() -> TestEnv {
     fs::create_dir_all(&sub_path).unwrap();
     run_setup_cmd("git", &["init", "--initial-branch=main"], &sub_path);
     run_setup_cmd("git", &["config", "user.name", "Test User"], &sub_path);
-    run_setup_cmd("git", &["config", "user.email", "test@example.com"], &sub_path);
+    run_setup_cmd(
+        "git",
+        &["config", "user.email", "test@example.com"],
+        &sub_path,
+    );
     fs::write(sub_path.join("sub_dummy.txt"), "sub hello").unwrap();
     run_setup_cmd("git", &["add", "sub_dummy.txt"], &sub_path);
     run_setup_cmd("git", &["commit", "-m", "sub initial commit"], &sub_path);
@@ -202,6 +210,7 @@ fi
 if [ "$1" = "set" ]; then
   mkdir -p "$build_dir"
   echo "mock_args = true" > "$build_dir/args.gn"
+  touch "$build_dir/build.ninja"
 elif [ "$1" = "gen" ]; then
   echo "mock gen success"
 elif [ "$1" = "build" ]; then
@@ -212,9 +221,13 @@ elif [ "$1" = "build" ]; then
       build_dir="out/default"
     fi
   fi
-  obj_dir="$build_dir/obj/sdk/ctf/tests/fidl/fuchsia.diagnostics"
-  mkdir -p "$obj_dir"
-  touch "$obj_dir/inspect-publisher.inspect_publisher.cc.o"
+  build_ninja="$build_dir/build.ninja"
+  build_gn="BUILD.gn"
+  if [ -f "$build_gn" ] && [ -f "$build_ninja" ]; then
+    if [ "$build_gn" -nt "$build_ninja" ]; then
+      touch "$build_ninja"
+    fi
+  fi
   echo "mock build success"
 fi
 "#;
@@ -224,7 +237,7 @@ fi
     // Create mock wheel extraction scripts
     let tools_scripts_dir = fuchsia_path.join("tools/build/scripts");
     fs::create_dir_all(&tools_scripts_dir).unwrap();
-    
+
     let mock_extract_script = r#"#!/bin/bash
 mkdir -p prebuilt/third_party/pydantic-core/pydantic_core
 touch prebuilt/third_party/pydantic-core/pydantic_core/__init__.py
@@ -232,24 +245,32 @@ mkdir -p prebuilt/third_party/protobuf-py3/protobuf
 touch prebuilt/third_party/protobuf-py3/protobuf/__init__.py
 echo "mock extraction done"
 "#;
-    
+
     let pydantic_script = tools_scripts_dir.join("extract_pydantic_core_wheel.sh");
     fs::write(&pydantic_script, mock_extract_script).unwrap();
     make_executable(&pydantic_script);
-    
+
     let protobuf_script = tools_scripts_dir.join("extract_protobuf_py3_wheel.sh");
     fs::write(&protobuf_script, mock_extract_script).unwrap();
     make_executable(&protobuf_script);
 
     // Commit only dummy.txt, scripts/fx and tools/build/scripts/extract_*.sh
-    run_setup_cmd("git", &[
-        "add", 
-        "dummy.txt", 
-        "scripts/fx", 
-        "tools/build/scripts/extract_pydantic_core_wheel.sh", 
-        "tools/build/scripts/extract_protobuf_py3_wheel.sh"
-    ], fuchsia_path);
-    run_setup_cmd("git", &["commit", "-m", "initial commit with mocks"], fuchsia_path);
+    run_setup_cmd(
+        "git",
+        &[
+            "add",
+            "dummy.txt",
+            "scripts/fx",
+            "tools/build/scripts/extract_pydantic_core_wheel.sh",
+            "tools/build/scripts/extract_protobuf_py3_wheel.sh",
+        ],
+        fuchsia_path,
+    );
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "initial commit with mocks"],
+        fuchsia_path,
+    );
 
     unsafe {
         std::env::set_var("FXENV_ROOT", fenv_root_dir.path());
@@ -306,7 +327,12 @@ fn test_full_lifecycle() {
     // Test that we cannot delete the environment while leased
     let delete_res = delete_environment(config, &env_id);
     assert!(delete_res.is_err());
-    assert!(delete_res.unwrap_err().to_string().contains("Cannot delete environment"));
+    assert!(
+        delete_res
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot delete environment")
+    );
 
     // 3. Test Environment Free
     free_environment_by_id(config, &env_info.environment_id).unwrap();
@@ -416,26 +442,21 @@ fn test_self_test_command() {
     let env = setup_mock_env();
     let config = &env.config;
 
-    let src_dir = config
-        .fuchsia_dir
-        .join("sdk/ctf/tests/fidl/fuchsia.diagnostics");
-    fs::create_dir_all(&src_dir).unwrap();
-    let src_file = src_dir.join("inspect_publisher.cc");
-    fs::write(&src_file, "numeric_properties.RecordInt(\"int\", -1);").unwrap();
+    // Create environment first to get an ID
+    let env_id = create_environment(config, "mock_config").unwrap();
 
+    let build_gn = config.fuchsia_dir.join("BUILD.gn");
+    fs::write(&build_gn, "# mock root BUILD.gn").unwrap();
+
+    run_setup_cmd("git", &["add", "BUILD.gn"], &config.fuchsia_dir);
     run_setup_cmd(
         "git",
-        &["add", "sdk/ctf/tests/fidl/fuchsia.diagnostics/inspect_publisher.cc"],
-        &config.fuchsia_dir,
-    );
-    run_setup_cmd(
-        "git",
-        &["commit", "-m", "add inspect_publisher.cc"],
+        &["commit", "-m", "add BUILD.gn"],
         &config.fuchsia_dir,
     );
 
     // Run self-test
-    run_self_test(config, None).unwrap();
+    run_self_test(config, env_id).unwrap();
 }
 
 #[test]
@@ -449,20 +470,28 @@ fn test_mtime_and_metadata_preservation() {
     let env_path = config.environments_dir().join(&env_id);
 
     // Verify metadata files were copied during create
-    assert!(env_path.join("sdk/ctf/build/internal/ctf_releases.gni").exists());
-    assert!(env_path.join("build/info/jiri_generated/commit_info").exists());
+    assert!(
+        env_path
+            .join("sdk/ctf/build/internal/ctf_releases.gni")
+            .exists()
+    );
+    assert!(
+        env_path
+            .join("build/info/jiri_generated/commit_info")
+            .exists()
+    );
     assert!(env_path.join("build/cipd.gni").exists());
 
     // 2. Allocate
     let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
-    
+
     // Verify index exists
     let index_path = env_info.path.join(".git/index");
     assert!(index_path.exists());
 
     // Record mtime of index and a source file
     let index_mtime_before = fs::metadata(&index_path).unwrap().modified().unwrap();
-    
+
     // We need a tracked file to check. dummy.txt is tracked.
     let dummy_path = env_info.path.join("dummy.txt");
     let dummy_mtime_before = fs::metadata(&dummy_path).unwrap().modified().unwrap();
@@ -474,31 +503,52 @@ fn test_mtime_and_metadata_preservation() {
     free_environment_by_id(config, &env_info.environment_id).unwrap();
 
     // Verify metadata files STILL exist (not deleted by clean)
-    assert!(env_path.join("sdk/ctf/build/internal/ctf_releases.gni").exists());
-    assert!(env_path.join("build/info/jiri_generated/commit_info").exists());
+    assert!(
+        env_path
+            .join("sdk/ctf/build/internal/ctf_releases.gni")
+            .exists()
+    );
+    assert!(
+        env_path
+            .join("build/info/jiri_generated/commit_info")
+            .exists()
+    );
     assert!(env_path.join("build/cipd.gni").exists());
 
     // Verify index mtime is preserved
     let index_mtime_after_free = fs::metadata(&index_path).unwrap().modified().unwrap();
-    assert_eq!(index_mtime_before, index_mtime_after_free, "Index mtime should be preserved after free");
+    assert_eq!(
+        index_mtime_before, index_mtime_after_free,
+        "Index mtime should be preserved after free"
+    );
 
     // Verify dummy.txt mtime is preserved
     let dummy_mtime_after_free = fs::metadata(&dummy_path).unwrap().modified().unwrap();
-    assert_eq!(dummy_mtime_before, dummy_mtime_after_free, "dummy.txt mtime should be preserved after free");
+    assert_eq!(
+        dummy_mtime_before, dummy_mtime_after_free,
+        "dummy.txt mtime should be preserved after free"
+    );
 
     // Sleep again
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // 4. Allocate again (no-op case)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 =
+        allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
 
     // Verify index mtime is preserved after no-op allocate
     let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
-    assert_eq!(index_mtime_before, index_mtime_after_alloc, "Index mtime should be preserved after no-op allocate");
+    assert_eq!(
+        index_mtime_before, index_mtime_after_alloc,
+        "Index mtime should be preserved after no-op allocate"
+    );
 
     // Verify dummy.txt mtime is preserved
     let dummy_mtime_after_alloc = fs::metadata(&dummy_path).unwrap().modified().unwrap();
-    assert_eq!(dummy_mtime_before, dummy_mtime_after_alloc, "dummy.txt mtime should be preserved after no-op allocate");
+    assert_eq!(
+        dummy_mtime_before, dummy_mtime_after_alloc,
+        "dummy.txt mtime should be preserved after no-op allocate"
+    );
 
     // Clean up
     free_environment_by_id(config, &env_info_2.environment_id).unwrap();
@@ -518,8 +568,14 @@ fn test_parent_jiri_update() {
     let env_info = allocate_environment(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Verify initial content
-    assert_eq!(fs::read_to_string(env_info.path.join("dummy.txt")).unwrap(), "hello");
-    assert_eq!(fs::read_to_string(env_info.path.join("third_party/sub/sub_dummy.txt")).unwrap(), "sub hello");
+    assert_eq!(
+        fs::read_to_string(env_info.path.join("dummy.txt")).unwrap(),
+        "hello"
+    );
+    assert_eq!(
+        fs::read_to_string(env_info.path.join("third_party/sub/sub_dummy.txt")).unwrap(),
+        "sub hello"
+    );
 
     // 3. Free environment
     free_environment_by_id(config, &env_info.environment_id).unwrap();
@@ -528,7 +584,11 @@ fn test_parent_jiri_update() {
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
     fs::write(&parent_dummy, "hello v2").unwrap();
     run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
-    run_setup_cmd("git", &["commit", "-m", "bump root"], &env.config.fuchsia_dir);
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "bump root"],
+        &env.config.fuchsia_dir,
+    );
 
     let parent_sub_path = env.config.fuchsia_dir.join("third_party/sub");
     let parent_sub_dummy = parent_sub_path.join("sub_dummy.txt");
@@ -537,12 +597,22 @@ fn test_parent_jiri_update() {
     run_setup_cmd("git", &["commit", "-m", "bump sub"], &parent_sub_path);
 
     // 5. Allocate again (should reuse same slot but update revisions)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
-    assert_eq!(env_info_2.environment_id, env_id, "Should reuse the same environment slot");
+    let env_info_2 =
+        allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    assert_eq!(
+        env_info_2.environment_id, env_id,
+        "Should reuse the same environment slot"
+    );
 
     // Verify updated content in workspace
-    assert_eq!(fs::read_to_string(env_info_2.path.join("dummy.txt")).unwrap(), "hello v2");
-    assert_eq!(fs::read_to_string(env_info_2.path.join("third_party/sub/sub_dummy.txt")).unwrap(), "sub hello v2");
+    assert_eq!(
+        fs::read_to_string(env_info_2.path.join("dummy.txt")).unwrap(),
+        "hello v2"
+    );
+    assert_eq!(
+        fs::read_to_string(env_info_2.path.join("third_party/sub/sub_dummy.txt")).unwrap(),
+        "sub hello v2"
+    );
 
     // Clean up
     free_environment_by_id(config, &env_info_2.environment_id).unwrap();
@@ -574,19 +644,26 @@ fn test_prebuilt_isolation() {
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
     fs::write(&parent_dummy, "hello v2").unwrap();
     run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
-    run_setup_cmd("git", &["commit", "-m", "bump root"], &env.config.fuchsia_dir);
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "bump root"],
+        &env.config.fuchsia_dir,
+    );
 
     // Also manually write to parent's prebuilt to simulate that parent's jiri update
     // would have updated it on disk.
     let parent_prebuilt_dir = env.config.fuchsia_dir.join("prebuilt/tools/mock_tool");
     fs::create_dir_all(&parent_prebuilt_dir).unwrap();
-    fs::write(parent_prebuilt_dir.join("file.txt"), "mock_content parent version:2").unwrap();
+    fs::write(
+        parent_prebuilt_dir.join("file.txt"),
+        "mock_content parent version:2",
+    )
+    .unwrap();
 
     // Verify Workspace 1 STILL sees version 1 (isolation check)
     let content = fs::read_to_string(&ws_prebuilt_file).unwrap();
     assert_eq!(
-        content,
-        "mock_content for fuchsia/tools/mock_tool/linux-amd64 version:1\n",
+        content, "mock_content for fuchsia/tools/mock_tool/linux-amd64 version:1\n",
         "Workspace 1 should be isolated from parent prebuilt updates"
     );
 
@@ -594,8 +671,12 @@ fn test_prebuilt_isolation() {
     free_environment_by_id(config, &env_info.environment_id).unwrap();
 
     // 5. Allocate Workspace 2 (uses same slot, now at revision B ➔ version 2)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
-    assert_eq!(env_info_2.environment_id, env_id, "Should reuse the same environment slot");
+    let env_info_2 =
+        allocate_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    assert_eq!(
+        env_info_2.environment_id, env_id,
+        "Should reuse the same environment slot"
+    );
 
     // Verify Workspace 2 gets version 2 (from mock cipd)
     let ws2_prebuilt_file = env_info_2.path.join("prebuilt/tools/mock_tool/file.txt");
@@ -623,12 +704,18 @@ fn test_wheel_extraction_mtime_preservation() {
     let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
-    let pydantic_init = workspace_path.join("prebuilt/third_party/pydantic-core/pydantic_core/__init__.py");
-    assert!(pydantic_init.exists(), "pydantic_core/__init__.py should be extracted");
+    let pydantic_init =
+        workspace_path.join("prebuilt/third_party/pydantic-core/pydantic_core/__init__.py");
+    assert!(
+        pydantic_init.exists(),
+        "pydantic_core/__init__.py should be extracted"
+    );
     let t1 = get_file_mtime(&pydantic_init).unwrap();
 
     // Simulate a build by creating the output file with a newer mtime
-    let output_file = workspace_path.join("out/default/host_x64/gen/prebuilt/third_party/pydantic-core/pydantic_core/__init__.py");
+    let output_file = workspace_path.join(
+        "out/default/host_x64/gen/prebuilt/third_party/pydantic-core/pydantic_core/__init__.py",
+    );
     fs::create_dir_all(output_file.parent().unwrap()).unwrap();
     fs::write(&output_file, "mock_output").unwrap();
 
@@ -643,7 +730,8 @@ fn test_wheel_extraction_mtime_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 4. Allocate Workspace again (re-use)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_info_2 =
+        allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id);
 
     // Check mtime of the input file after re-use
@@ -652,7 +740,10 @@ fn test_wheel_extraction_mtime_preservation() {
     // With the fix, t3 should be equal to t1 (not updated to now).
     // So the output (t2) is still newer than the input (t3).
     // If it failed (re-extracted), t3 would be 'now' (> t2), dirtying the build.
-    assert_eq!(t3, t1, "pydantic_core/__init__.py mtime should be preserved on reuse");
+    assert_eq!(
+        t3, t1,
+        "pydantic_core/__init__.py mtime should be preserved on reuse"
+    );
     assert!(t2 > t3, "Build output should remain newer than input");
 
     // Clean up
@@ -673,21 +764,27 @@ fn test_jiri_latest_snapshot_isolation() {
     let workspace_path = env_info.path;
 
     let ws_latest = workspace_path.join(".jiri_root/update_history/latest");
-    assert!(ws_latest.exists(), "latest snapshot should be copied to workspace");
+    assert!(
+        ws_latest.exists(),
+        "latest snapshot should be copied to workspace"
+    );
     let t1 = get_file_mtime(&ws_latest).unwrap();
 
     // 2. Simulate a parent jiri update by touching the parent's latest snapshot file
     let parent_latest = config.fuchsia_dir.join(".jiri_root/update_history/latest");
-    
+
     // Wait a bit to ensure the new mtime is different
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     let new_time = std::time::SystemTime::now();
     set_file_mtime(&parent_latest, new_time).unwrap();
 
     // 3. Verify workspace latest snapshot mtime did NOT change (isolated)
     let t2 = get_file_mtime(&ws_latest).unwrap();
-    assert_eq!(t2, t1, "Workspace latest snapshot mtime should be isolated from parent updates");
+    assert_eq!(
+        t2, t1,
+        "Workspace latest snapshot mtime should be isolated from parent updates"
+    );
 
     // Clean up
     free_environment_by_id(config, &env_info.environment_id).unwrap();
@@ -697,54 +794,57 @@ fn test_jiri_latest_snapshot_isolation() {
 #[test]
 fn test_existing_cache_clamping_migration() {
     let _lock = TEST_LOCK.lock().unwrap();
-    use fxenv::utils::{get_file_mtime, set_file_mtime};
     use fxenv::sync::{JiriPackage, calculate_group_hash};
-    
+    use fxenv::utils::{get_file_mtime, set_file_mtime};
+
     let env = setup_mock_env();
     let config = &env.config;
 
     let shared_prebuilts_dir = config.fxenv_root.join("shared-prebuilts");
-    
-    let pkgs = vec![
-        JiriPackage {
-            name: "fuchsia/tools/mock_tool/linux-amd64".to_string(),
-            path: "prebuilt/tools/mock_tool".to_string(),
-            version: "version:1".to_string(),
-            platforms: Some(vec!["linux-amd64".to_string()]),
-        }
-    ];
+
+    let pkgs = vec![JiriPackage {
+        name: "fuchsia/tools/mock_tool/linux-amd64".to_string(),
+        path: "prebuilt/tools/mock_tool".to_string(),
+        version: "version:1".to_string(),
+        platforms: Some(vec!["linux-amd64".to_string()]),
+    }];
     let hash = calculate_group_hash(&pkgs);
     let escaped_path = "prebuilt_tools_mock_tool";
     let cache_subdir = format!("merged/{}/{}", escaped_path, hash);
     let shared_pkg_dir = shared_prebuilts_dir.join(&cache_subdir);
-    
+
     fs::create_dir_all(&shared_pkg_dir).unwrap();
-    
+
     // Create .versions directory to simulate successful CIPD installation (cache hit)
     fs::create_dir_all(shared_pkg_dir.join(".versions")).unwrap();
-    
+
     // Create a file with 2042 mtime
     let file_2042 = shared_pkg_dir.join("file_2042.txt");
     fs::write(&file_2042, "mock content").unwrap();
-    
-    let future_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2290204800); // 2042-07-28
+
+    let future_time =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2290204800); // 2042-07-28
     set_file_mtime(&file_2042, future_time).unwrap();
-    
+
     // 2. Allocate workspace (this will be a cache hit)
     let env_id = create_environment(config, "mock_config").unwrap();
     let env_info = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
-    
+
     let ws_file = workspace_path.join("prebuilt/tools/mock_tool/file_2042.txt");
     assert!(ws_file.exists());
-    
+
     let mtime = get_file_mtime(&ws_file).unwrap();
-    
+
     // With the old code, mtime will still be 2042.
     // With the fix, mtime will be clamped to 2020-01-01.
-    let expected_clamp_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1577836800); // 2020-01-01
-    assert_eq!(mtime, expected_clamp_time, "Existing cache files should be clamped on allocation");
-    
+    let expected_clamp_time =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1577836800); // 2020-01-01
+    assert_eq!(
+        mtime, expected_clamp_time,
+        "Existing cache files should be clamped on allocation"
+    );
+
     // Clean up
     free_environment_by_id(config, &env_info.environment_id).unwrap();
     delete_environment(config, &env_id).unwrap();
@@ -764,11 +864,11 @@ fn test_args_gn_mtime_preservation_on_free() {
 
     let args_gn = workspace_path.join("out/default/args.gn");
     assert!(args_gn.exists());
-    
+
     // Set a known mtime on args.gn and args.gn.ref
     let t1 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
     set_file_mtime(&args_gn, t1).unwrap();
-    
+
     let args_gn_ref = workspace_path.join("out/default/args.gn.ref");
     fs::write(&args_gn_ref, fs::read_to_string(&args_gn).unwrap()).unwrap(); // ensure contents are identical
     set_file_mtime(&args_gn_ref, t1).unwrap();
@@ -778,7 +878,10 @@ fn test_args_gn_mtime_preservation_on_free() {
 
     // 3. Verify args.gn mtime did NOT change
     let t2 = get_file_mtime(&args_gn).unwrap();
-    assert_eq!(t2, t1, "args.gn mtime should be preserved on free if not modified");
+    assert_eq!(
+        t2, t1,
+        "args.gn mtime should be preserved on free if not modified"
+    );
 
     // Clean up
     delete_environment(config, &env_id).unwrap();
@@ -804,11 +907,20 @@ fn test_bazel_package_copying() {
     // 3. Verify Bazel package is copied (not symlinked)
     let ws_bazel = workspace_path.join("prebuilt/third_party/bazel/linux-x64");
     assert!(ws_bazel.exists());
-    assert!(!ws_bazel.is_symlink(), "Bazel package should be a real directory (copied)");
-    assert!(ws_bazel.join("file.txt").exists(), "Bazel package contents should be copied");
-    
+    assert!(
+        !ws_bazel.is_symlink(),
+        "Bazel package should be a real directory (copied)"
+    );
+    assert!(
+        ws_bazel.join("file.txt").exists(),
+        "Bazel package contents should be copied"
+    );
+
     let version_marker = ws_bazel.join(".fxenv_source_cache");
-    assert!(version_marker.exists(), "Version marker should be written in workspace copy");
+    assert!(
+        version_marker.exists(),
+        "Version marker should be written in workspace copy"
+    );
 
     let t1 = get_file_mtime(&ws_bazel.join("file.txt")).unwrap();
 
@@ -819,13 +931,17 @@ fn test_bazel_package_copying() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 5. Allocate again (re-use)
-    let env_info_2 = allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_info_2 =
+        allocate_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
     assert_eq!(env_info_2.environment_id, env_id);
 
     // Verify Bazel was NOT re-copied (mtime preserved)
     let ws_bazel2 = env_info_2.path.join("prebuilt/third_party/bazel/linux-x64");
     let t2 = get_file_mtime(&ws_bazel2.join("file.txt")).unwrap();
-    assert_eq!(t2, t1, "Bazel package should not be re-copied if version is unchanged");
+    assert_eq!(
+        t2, t1,
+        "Bazel package should not be re-copied if version is unchanged"
+    );
 
     // Clean up
     free_environment_by_id(config, &env_info_2.environment_id).unwrap();
@@ -845,7 +961,11 @@ fn test_nosync_and_sync() {
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
     fs::write(&parent_dummy, "hello v2").unwrap();
     run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
-    run_setup_cmd("git", &["commit", "-m", "bump root"], &env.config.fuchsia_dir);
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "bump root"],
+        &env.config.fuchsia_dir,
+    );
 
     // 3. Allocate with nosync = true
     let env_info = allocate_environment(config, "mock_config", "test_agent", false, true).unwrap();
@@ -883,5 +1003,3 @@ fn test_invalid_id_validation() {
     assert!(free_environment_by_id(config, "../invalid").is_err());
     assert!(free_environment_by_id(config, "/absolute/path").is_err());
 }
-
-

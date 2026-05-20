@@ -2,7 +2,12 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "fxenv", version, about = "Fuchsia Agent Environment Manager", disable_help_flag = true)]
+#[command(
+    name = "fxenv",
+    version,
+    about = "Fuchsia Agent Environment Manager",
+    disable_help_flag = true
+)]
 pub struct Cli {
     /// Path to the main Fuchsia checkout (defaults to $FUCHSIA_DIR)
     #[arg(long, global = true, env = "FUCHSIA_DIR")]
@@ -53,7 +58,6 @@ pub enum Commands {
     },
     /// Free (release) an environment back to the pool
     Free {
-
         /// Environment ID to free (must be leased)
         id: String,
     },
@@ -67,11 +71,10 @@ pub enum Commands {
         /// Environment ID
         id: Option<String>,
     },
-    /// Run a self-test to verify fxenv functionality
+    /// Run a self-test to verify fxenv functionality using an existing environment
     SelfTest {
-        /// Use an existing environment ID instead of creating a new one
-        #[arg(long)]
-        use_env: Option<String>,
+        /// Environment ID to use for the test
+        id: String,
     },
     /// Clean up orphaned or expired leases in the pool
     Gc {
