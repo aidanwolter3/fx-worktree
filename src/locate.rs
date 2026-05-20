@@ -9,6 +9,10 @@ pub fn locate_path(config: &Config, id: Option<String>) -> Result<PathBuf> {
         _ => return config.read_last_created(),
     };
 
+    if std::path::Path::new(&id).components().count() > 1 {
+        return Err(anyhow!("Invalid environment ID: {}", id));
+    }
+
     // 1. Check if the exact directory exists
     let env_path = config.environments_dir().join(&id);
     if env_path.exists() {

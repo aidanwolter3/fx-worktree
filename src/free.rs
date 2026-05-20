@@ -7,6 +7,10 @@ use std::fs;
 use std::path::Path;
 
 pub fn free_environment_by_id(config: &Config, id: &str) -> Result<()> {
+    if std::path::Path::new(id).components().count() > 1 {
+        return Err(anyhow!("Invalid environment ID: {}", id));
+    }
+
     let lease_file_name = format!("{}.lease", id);
     let lease_file_path = config.leases_dir().join(&lease_file_name);
 

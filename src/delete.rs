@@ -5,6 +5,10 @@ use std::fs;
 use std::path::Path;
 
 pub fn delete_environment(config: &Config, id: &str) -> Result<()> {
+    if std::path::Path::new(id).components().count() > 1 {
+        return Err(anyhow!("Invalid environment ID: {}", id));
+    }
+
     // 1. Verify the environment is not leased
     let leases_dir = config.leases_dir();
     if leases_dir.exists() {
