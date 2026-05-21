@@ -1,8 +1,31 @@
 # fx-worktree (Fuchsia Worktree Manager)
 
-`fx-worktree` is a stateless, concurrent-safe CLI tool designed to provision instantaneous, isolated development environments for parallel agents working on Fuchsia.
+`fx-worktree` is a stateless, concurrent-safe CLI tool designed to provision
+instantaneous, isolated development environments for parallel agents working on
+Fuchsia.
 
-It pools persistent **Worktrees** (workspaces) on disk to preserve Ninja build timestamps and remote compiler caches, allowing sequential agents to reuse environments and achieve **no-op incremental build speeds (< 3 seconds)**, while isolating parallel runs.
+![fx-worktree Demo](docs/demo.gif)
+
+---
+
+## Why fx-worktree?
+
+Fuchsia is a massive codebase. Standard development workflows often suffer
+from:
+*   **State corruption**: Sharing a single build directory between parallel
+    tasks or agents leads to clobbered builds and race conditions.
+*   **Resource waste**: Recreating environments from scratch for every task is
+    itself inefficient.
+
+`fx-worktree` solves these problems by pooling persistent **Worktrees** (git
+worktrees) and pairing them 1:1 with dedicated Fuchsia **outdirs** (build
+output directories). This ensures:
+*   **Isolation**: Parallel agents work in completely separate environments,
+    preventing state leakage.
+*   **Instantaneous setups**: Leasing a pre-warmed workspace takes seconds.
+*   **Extreme speed**: Reusing existing workspaces preserves Ninja build
+    timestamps and remote compiler caches, enabling **no-op incremental
+    builds in under 3 seconds**.
 
 ---
 
@@ -14,7 +37,8 @@ cargo install --path . --force
 ```
 
 ### Zsh Shell Integration (Required for `fx-worktree cd`)
-Add the shell wrapper function to your `~/.zshrc` to support the directory navigation feature:
+Add the shell wrapper function to your `~/.zshrc` to support the directory
+navigation feature:
 
 ```zsh
 # fx-worktree shell wrapper for cd command
