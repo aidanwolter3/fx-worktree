@@ -209,12 +209,39 @@ fx-worktree() {
 }
 ```
 
-Set up Zsh completions (optional):
-```bash
-mkdir -p ~/.zsh/completion
-fx-worktree completions zsh > ~/.zsh/completion/_fx-worktree
-# Add ~/.zsh/completion to your fpath in ~/.zshrc before compinit
-```
+### Zsh Completions
+
+`fx-worktree` supports rich, dynamic shell completions for Zsh. It dynamically queries the state of your worktrees to provide context-aware suggestions:
+*   **Configs**: Autocompletes available configuration names when running `add` or `lease`.
+*   **Free Worktrees**: Autocompletes only free worktree IDs for commands like `remove` or `self-test`.
+*   **Leased Worktrees**: Autocompletes only active (leased) worktree IDs for `release`.
+*   **All Worktrees**: Autocompletes all existing worktree IDs for `sync`, `locate`, or `cd`.
+
+To enable these completions:
+
+1.  **Generate the completion script**:
+    Create a dedicated completion directory and dump the generated Zsh completion script into it:
+    ```zsh
+    mkdir -p ~/.zsh/completion
+    fx-worktree completions zsh > ~/.zsh/completion/_fx-worktree
+    ```
+
+2.  **Configure your `~/.zshrc`**:
+    Add the completion directory to your `fpath` **before** the completion system (`compinit`) is initialized.
+
+    Add the following lines to your `~/.zshrc`:
+    ```zsh
+    # Enable fx-worktree completions
+    fpath=(~/.zsh/completion $fpath)
+
+    # Initialize completions (if not already done)
+    autoload -Uz compinit
+    compinit
+    ```
+
+    *Note: If you already have `compinit` in your `~/.zshrc`, ensure the `fpath` line is placed above it.*
+
+    For dynamic completions to work, the `fx-worktree` binary must be available in your `PATH` (typically `~/.cargo/bin` if installed via `cargo install`).
 
 ---
 
