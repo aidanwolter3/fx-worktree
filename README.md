@@ -29,6 +29,35 @@ output directories). This ensures:
 
 ---
 
+## Technical Rationale: 1:1 Worktree to Outdir Pairing
+
+A core design principle of `fx-worktree` is the strict **1:1 pairing between
+a Git Worktree and a Fuchsia Output Directory (`outdir`)**.
+
+### The Problem with Shared Build Directories
+In Fuchsia, the build configuration (`args.gn`) and build artifacts are stored
+in the `outdir`. This configuration contains absolute paths referencing the
+source tree (the worktree).
+*   **Path Invalidations**: If multiple worktrees shared a single `outdir`,
+    switching between worktrees would constantly invalidate build paths,
+    forcing GN to regenerate and Ninja to re-compile most of the codebase.
+    This destroys the possibility of incremental builds.
+*   **State Desynchronization**: If a single worktree tried to use multiple
+    `outdirs` dynamically, the build state would become desynchronized,
+    leading to unexpected rebuilds or build failures.
+
+### The 1:1 Solution
+`fx-worktree` manages this complexity by ensuring that when a worktree is
+created, a dedicated `outdir` is provisioned alongside it.
+*   **Persistent Association**: The worktree is permanently paired with its
+    dedicated `outdir`.
+*   **No-Op Incremental Builds**: Because the source files and build artifacts
+    remain in sync, subsequent builds in the same leased environment can
+    determine that nothing has changed and complete in **less than 3
+    seconds**.
+
+---
+
 ## Installation
 
 Compile and install the binary locally:
@@ -79,7 +108,8 @@ Lease a worktree to start work.
 ```bash
 fx-worktree lease <config_name> [--agent-id <agent_name>] [--sync] [--json]
 ```
-*   `--sync`: Opt-in to update the worktree to the latest code in the main fuchsia checkout, clean it, and download/isolate prebuilts.
+*   `--sync`: Opt-in to update the worktree to the latest code in the main
+    fuchsia checkout, clean it, and download/isolate prebuilts.
 
 *   **Default Output (Human Friendly):**
     ```none
@@ -138,9 +168,12 @@ fx-worktree cd [worktree_id]
 ```
 
 ### 8. Run Self-Test
-Runs a programmatic verification of the `fx-worktree` lifecycle (leasing, build regeneration, cache preservation, and cleanup) using an existing worktree.
+Runs a programmatic verification of the `fx-worktree` lifecycle (leasing,
+build regeneration, cache preservation, and cleanup) using an existing
+worktree.
 ```bash
 fx-worktree self-test <worktree_id>
 ```
 > [!IMPORTANT]
-> The target worktree must be "Free" (not leased by any agent) and should ideally be "warmed" (built at least once) to run the test quickly.
+> The target worktree must be "Free" (not leased by any agent) and should
+> ideally be "warmed" (built at least once) to run the test quickly.
