@@ -22,18 +22,6 @@ pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
         .join(format!("self-test-{}", &rand_id[0..8]));
     fs::create_dir_all(&selftest_root)?;
 
-    // Share the prebuilt cache to speed up the self-test
-    let base_shared_prebuilts = config.fx_worktree_root.join("shared-prebuilts");
-    fs::create_dir_all(&base_shared_prebuilts)?;
-    let test_shared_prebuilts = selftest_root.join("shared-prebuilts");
-    std::os::unix::fs::symlink(&base_shared_prebuilts, &test_shared_prebuilts).with_context(
-        || {
-            format!(
-                "Failed to symlink shared-prebuilts from {:?} to {:?}",
-                base_shared_prebuilts, test_shared_prebuilts
-            )
-        },
-    )?;
 
     let test_config = Config {
         fx_worktree_root: selftest_root.clone(),

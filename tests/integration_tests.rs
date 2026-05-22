@@ -197,7 +197,24 @@ fuchsia/tools/mock_tool/linux-amd64 $version
 @Subdir prebuilt/third_party/bazel/linux-x64
 infra/3pp/tools/bazel/linux-amd64 $version
 EOF
-  "$base_dir/.jiri_root/bin/cipd" -root . -ensure-file "$ensure_file"
+  cache_dir="$base_dir/.jiri_root/prebuilts"
+  "$base_dir/.jiri_root/bin/cipd" -root "$cache_dir" -ensure-file "$ensure_file"
+  
+  while read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^# ]] && continue
+    [[ -z "$line" ]] && continue
+    if [[ "$line" =~ ^@Subdir[[:space:]]+(.*) ]]; then
+      current_subdir="${{BASH_REMATCH[1]}}"
+    else
+      read -r pkg ver <<< "$line"
+      if [ -n "$current_subdir" ]; then
+        mkdir -p "$(dirname "$current_subdir")"
+        rm -rf "$current_subdir"
+        ln -sf "$cache_dir/$current_subdir/$ver" "$current_subdir"
+      fi
+    fi
+  done < "$ensure_file"
+  
   rm "$ensure_file"
   
   if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
@@ -278,7 +295,11 @@ if [ -n "$root_dir" ] && [ -n "$ensure_file" ]; then
     else
       read -r pkg ver <<< "$line"
       if [ -n "$current_subdir" ]; then
-        target_dir="$root_dir/$current_subdir"
+        if [[ "$root_dir" =~ \.jiri_root/prebuilts$ ]]; then
+          target_dir="$root_dir/$current_subdir/$ver"
+        else
+          target_dir="$root_dir/$current_subdir"
+        fi
         mkdir -p "$target_dir"
         echo "mock_content for $pkg $ver" > "$target_dir/file.txt"
       fi
