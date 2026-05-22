@@ -49,7 +49,7 @@ pub fn sync_environment(
             return Ok(false);
         }
 
-        if !workspace_path.join(".jiri_root").exists() {
+        if !workspace_path.join(".fx-worktree-completed").exists() {
             return Ok(false);
         }
 
@@ -98,6 +98,9 @@ pub fn sync_environment(
         }
     }
 
+    // Copy/restore toolchain metadata (must be before sync for hooks)
+    copy_toolchain_metadata(config, workspace_path)?;
+
     // Call 'jiri worktree sync'
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
     let jiri_cmd = if jiri_bin.exists() {
@@ -113,9 +116,6 @@ pub fn sync_environment(
         &[],
     )
     .context("Failed to run jiri worktree sync")?;
-
-    // Copy/restore toolchain metadata
-    copy_toolchain_metadata(config, workspace_path)?;
 
     // Restore index mtimes for unchanged and clean worktrees
     for (wt, index_path, mtime_opt, old_head_opt) in wt_states {

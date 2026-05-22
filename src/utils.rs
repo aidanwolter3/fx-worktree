@@ -165,6 +165,9 @@ pub fn copy_toolchain_metadata(config: &Config, workspace_path: &Path) -> Result
     }
 
     for file_name in &["config", "prebuilt.json", "prebuilt_versions.json"] {
+        if *file_name == "config" && ws_jiri_root.join(file_name).exists() {
+            continue;
+        }
         let base_file = base_jiri_root.join(file_name);
         if base_file.exists() {
             copy_file_if_different(&base_file, &ws_jiri_root.join(file_name))?;
