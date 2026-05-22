@@ -19,8 +19,21 @@ pub fn sync_environment(
         .with_context(|| format!("Failed to canonicalize workspace path {:?}", workspace_path))?;
     let workspace_path = &workspace_path_buf;
 
+    let worktrees = find_worktrees(workspace_path)?;
+
+    // Record initial mtimes in case we exit early (git status in no-op check might touch them)
+    let mut initial_mtimes = Vec::new();
+    for wt in &worktrees {
+        let index_path = wt.join(".git/index");
+        if index_path.exists() {
+            if let Ok(mtime) = get_file_mtime(&index_path) {
+                initial_mtimes.push((index_path, mtime));
+            }
+        }
+    }
+
     // 1. Optimize no-op check: Compare HEAD of parent repo with HEAD of workspace root
-    // and check if workspace is clean.
+    // and check if all worktrees are clean.
     let is_noop = (|| -> Result<bool> {
         let parent_head = run_command("git", &["rev-parse", "HEAD"], &config.fuchsia_dir, &[])?;
         let parent_head_sha = String::from_utf8_lossy(&parent_head.stdout)
@@ -36,14 +49,21 @@ pub fn sync_environment(
             return Ok(false);
         }
 
-        let status = run_command(
-            "git",
-            &["status", "--porcelain", "-uno"],
-            workspace_path,
-            &[],
-        )?;
-        if !status.stdout.is_empty() {
+        if !workspace_path.join(".jiri_root").exists() {
             return Ok(false);
+        }
+
+        // Check if all worktrees are clean
+        for wt in &worktrees {
+            let status = run_command(
+                "git",
+                &["status", "--porcelain", "-uno"],
+                wt,
+                &[],
+            )?;
+            if !status.stdout.is_empty() {
+                return Ok(false);
+            }
         }
 
         Ok(true)
@@ -52,6 +72,12 @@ pub fn sync_environment(
 
     if is_noop {
         log::info!("Environment {} is already synced (no-op).", env_id);
+        // Restore mtimes because git status might have touched them
+        for (path, mtime) in initial_mtimes {
+            if let Err(e) = set_file_mtime(&path, mtime) {
+                log::warn!("Failed to restore index mtime for {:?}: {:?}", path, e);
+            }
+        }
         return Ok(());
     }
 
@@ -59,8 +85,7 @@ pub fn sync_environment(
         eprintln!("Syncing environment {}...", env_id);
     }
 
-    // Record index mtimes and HEADs before sync
-    let worktrees = find_worktrees(workspace_path)?;
+    // Record index mtimes and HEADs before sync (for partial restoration)
     let mut wt_states = Vec::new();
     for wt in &worktrees {
         let index_path = wt.join(".git/index");

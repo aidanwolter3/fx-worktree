@@ -1,12 +1,8 @@
 use crate::config::Config;
 use crate::environment::EnvironmentInfo;
-use crate::utils::{
-    clean_worktree, copy_file_if_different, find_worktrees, get_file_mtime, set_file_mtime,
-};
+use crate::utils::{copy_file_if_different, find_worktrees, get_file_mtime, run_command, set_file_mtime};
 use anyhow::{Context, Result, anyhow};
-use rayon::prelude::*;
 use std::fs;
-use std::path::Path;
 
 pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
     if std::path::Path::new(id).components().count() > 1 {
@@ -62,7 +58,7 @@ pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
 
     let (lease_file_path, env_info) = &matches[0];
     let released_id = env_info.environment_id.clone();
-    release_worktree_internal(env_info)?;
+    release_worktree_internal(config, env_info)?;
 
     // Delete lease file
     fs::remove_file(lease_file_path)
@@ -72,7 +68,7 @@ pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
     Ok(released_id)
 }
 
-pub fn release_worktree_internal(env_info: &EnvironmentInfo) -> Result<()> {
+pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) -> Result<()> {
     log::info!("Releasing worktree {}", env_info.environment_id);
 
     // Record index mtimes before clean
@@ -87,8 +83,21 @@ pub fn release_worktree_internal(env_info: &EnvironmentInfo) -> Result<()> {
         }
     }
 
-    // 1. Clean the workspace (do not delete or remove worktrees, preserve out/ cache)
-    clean_workspace(&env_info.path)?;
+    // 1. Clean the workspace by calling 'jiri worktree clean'
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
+    } else {
+        "jiri"
+    };
+
+    run_command(
+        jiri_cmd,
+        &["worktree", "clean"],
+        &env_info.path,
+        &[],
+    )
+    .context("Failed to run jiri worktree clean")?;
 
     // Restore index mtimes after clean
     for (path, mtime) in index_mtimes {
@@ -98,13 +107,6 @@ pub fn release_worktree_internal(env_info: &EnvironmentInfo) -> Result<()> {
     }
 
     // 2. Restore args.gn in the build directory
-    // We use copy_file_if_different instead of a standard copy to ensure that if the args.gn
-    // contents haven't changed, we do not update its modification time.
-    //
-    // If we update its mtime on every free/use cycle, Ninja will detect args.gn as newer than
-    // the build.ninja.stamp (which was generated during the previous compile), causing GN
-    // to regenerate build files on the next compile, which in turn dirties generated Bazel
-    // workspace files (e.g., BUILD.bazel mappings) and breaks no-op builds.
     let out_dir = env_info.path.join("out/default");
     if out_dir.exists() {
         let args_gn_ref = out_dir.join("args.gn.ref");
@@ -115,26 +117,6 @@ pub fn release_worktree_internal(env_info: &EnvironmentInfo) -> Result<()> {
                 .with_context(|| format!("Failed to copy {:?} to {:?}", args_gn_ref, args_gn))?;
         }
     }
-
-    Ok(())
-}
-
-fn clean_workspace(workspace_path: &Path) -> Result<()> {
-    if !workspace_path.exists() {
-        return Ok(());
-    }
-    log::info!("Cleaning up workspace at {:?}", workspace_path);
-
-    let worktrees = find_worktrees(workspace_path)?;
-    worktrees
-        .par_iter()
-        .try_for_each(|worktree_path| -> Result<()> {
-            let is_root = worktree_path == workspace_path;
-            if let Err(e) = clean_worktree(worktree_path, is_root) {
-                log::error!("Failed to clean worktree {:?}: {:?}", worktree_path, e);
-            }
-            Ok(())
-        })?;
 
     Ok(())
 }

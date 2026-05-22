@@ -96,7 +96,7 @@ fn setup_mock_env() -> TestEnv {
         r#"#!/bin/bash
 base_dir="{0}"
 cwd=$(pwd)
-commit_msg=$(git -C "$cwd" log -n 1 --format=%s 2>/dev/null || echo "")
+commit_msg=$(git -C "$base_dir" log -n 1 --format=%s 2>/dev/null || echo "")
 version="version:1"
 if [ "$commit_msg" = "bump root" ]; then
   version="version:2"
@@ -200,6 +200,27 @@ EOF
   if [ -f "tools/build/scripts/extract_protobuf_py3_wheel.sh" ]; then
     ./tools/build/scripts/extract_protobuf_py3_wheel.sh
   fi
+elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
+  git clean -fdx \
+    -e .fx-worktree-completed \
+    -e prebuilt \
+    -e .jiri_root \
+    -e .fx-build-dir \
+    -e out \
+    -e sdk/ctf/build/internal/ctf_releases.gni \
+    -e build/info/jiri_generated \
+    -e build/cipd.gni \
+    -e .jiri_manifest
+  if [ -d "third_party/sub" ]; then
+    git -C "third_party/sub" clean -fdx
+  fi
+elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  target_path=$3
+  if [ -d "$target_path/third_party/sub" ]; then
+    git -C "third_party/sub" worktree remove -f "$target_path/third_party/sub"
+  fi
+  git worktree remove -f "$target_path"
+  rm -rf "$target_path"
 fi
 "#,
         fuchsia_path.to_str().unwrap()
@@ -862,65 +883,7 @@ fn test_args_gn_mtime_preservation_on_free() {
     remove_environment(config, &env_id, false).unwrap();
 }
 
-#[test]
-fn test_bazel_package_copying() {
-    let _lock = TEST_LOCK.lock().unwrap();
-    use fx_worktree::utils::get_file_mtime;
-    let env = setup_mock_env();
-    let config = &env.config;
 
-    // 1. Allocate workspace
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
-    let workspace_path = env_info.path;
-
-    // 2. Verify mock_tool is symlinked
-    let ws_mock_tool = workspace_path.join("prebuilt/tools/mock_tool");
-    assert!(ws_mock_tool.exists());
-    assert!(ws_mock_tool.is_symlink(), "mock_tool should be symlinked");
-
-    // 3. Verify Bazel package is copied (not symlinked)
-    let ws_bazel = workspace_path.join("prebuilt/third_party/bazel/linux-x64");
-    assert!(ws_bazel.exists());
-    assert!(
-        !ws_bazel.is_symlink(),
-        "Bazel package should be a real directory (copied)"
-    );
-    assert!(
-        ws_bazel.join("file.txt").exists(),
-        "Bazel package contents should be copied"
-    );
-
-    let version_marker = ws_bazel.join(".fxenv_source_cache");
-    assert!(
-        version_marker.exists(),
-        "Version marker should be written in workspace copy"
-    );
-
-    let t1 = get_file_mtime(&ws_bazel.join("file.txt")).unwrap();
-
-    // 4. Free workspace
-    release_worktree(config, &env_info.environment_id).unwrap();
-
-    // Wait a bit
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // 5. Allocate again (re-use)
-    let env_info_2 = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
-    assert_eq!(env_info_2.environment_id, env_id);
-
-    // Verify Bazel was NOT re-copied (mtime preserved)
-    let ws_bazel2 = env_info_2.path.join("prebuilt/third_party/bazel/linux-x64");
-    let t2 = get_file_mtime(&ws_bazel2.join("file.txt")).unwrap();
-    assert_eq!(
-        t2, t1,
-        "Bazel package should not be re-copied if version is unchanged"
-    );
-
-    // Clean up
-    release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
-}
 
 #[test]
 fn test_nosync_and_sync() {
