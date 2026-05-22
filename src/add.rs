@@ -5,15 +5,6 @@ use std::fs;
 
 pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Result<String> {
     let env_path = provision_workspace(config, quiet)?;
-    let env_id = env_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("Failed to get env_id from path {:?}", env_path))?
-        .to_string();
-
-    if !quiet {
-        eprintln!("Adding worktree {}...", env_id);
-    }
 
     // Implement cleanup helper in case creation fails in the middle
     let cleanup = || {
@@ -32,6 +23,19 @@ pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Resul
         );
         let _ = fs::remove_dir_all(&env_path);
     };
+
+    let env_id = env_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| {
+            cleanup();
+            anyhow::anyhow!("Failed to get env_id from path {:?}", env_path)
+        })?
+        .to_string();
+
+    if !quiet {
+        eprintln!("Adding worktree {}...", env_id);
+    }
 
     // Run sync to get prebuilts and ensure correct revisions (required for fx set)
     if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
