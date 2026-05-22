@@ -221,9 +221,19 @@ elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
   fi
 elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
   target_path=$3
+  restore_git() {{
+    local p=$1
+    if [ -L "$p/.git" ]; then
+      local t=$(readlink "$p/.git")
+      rm "$p/.git"
+      echo "gitdir: $t" > "$p/.git"
+    fi
+  }}
   if [ -d "$target_path/third_party/sub" ]; then
+    restore_git "$target_path/third_party/sub"
     git -C "third_party/sub" worktree remove -f "$target_path/third_party/sub"
   fi
+  restore_git "$target_path"
   git worktree remove -f "$target_path"
   rm -rf "$target_path"
 fi
@@ -992,5 +1002,45 @@ fn test_release_by_agent_id() {
 
     remove_environment(config, &env_id1, false, false).unwrap();
     remove_environment(config, &env_id2, false, false).unwrap();
+}
+
+#[test]
+fn test_add_failure_cleanup() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // Attempt to create environment with "fail_config" which should fail during fx set
+    let res = add_environment(config, "fail_config", false);
+    assert!(res.is_err());
+
+    // Verify that the directory was cleaned up
+    let envs_dir = config.environments_dir();
+    if envs_dir.exists() {
+        let entries: Vec<_> = std::fs::read_dir(&envs_dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert!(entries.is_empty(), "Environments directory should be empty after failure, but contains: {:?}", entries);
+    }
+
+    // Verify Jiri worktrees are cleaned up.
+    let output = Command::new("git")
+        .args(&["worktree", "list", "--porcelain"])
+        .current_dir(&config.fuchsia_dir)
+        .output()
+        .expect("failed to run git worktree list");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let worktree_count = stdout.lines().filter(|l| l.starts_with("worktree ")).count();
+    assert_eq!(worktree_count, 1, "There should be only 1 git worktree (the main repo), but found: {}", stdout);
+
+    let output_sub = Command::new("git")
+        .args(&["worktree", "list", "--porcelain"])
+        .current_dir(config.fuchsia_dir.join("third_party/sub"))
+        .output()
+        .expect("failed to run git worktree list in subproject");
+    let stdout_sub = String::from_utf8_lossy(&output_sub.stdout);
+    let worktree_count_sub = stdout_sub.lines().filter(|l| l.starts_with("worktree ")).count();
+    assert_eq!(worktree_count_sub, 1, "Subproject should have only 1 git worktree, but found: {}", stdout_sub);
 }
 
