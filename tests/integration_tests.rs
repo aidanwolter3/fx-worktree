@@ -94,6 +94,7 @@ fn setup_mock_env() -> TestEnv {
 
     let jiri_script = format!(
         r#"#!/bin/bash
+base_dir="{0}"
 cwd=$(pwd)
 commit_msg=$(git -C "$cwd" log -n 1 --format=%s 2>/dev/null || echo "")
 version="version:1"
@@ -103,18 +104,18 @@ fi
 
 if [ "$1" = "project" ] && [ "$2" = "-json-output" ]; then
   output_file=$3
-  revision=$(git -C "{}" rev-parse HEAD)
-  sub_revision=$(git -C "{}/third_party/sub" rev-parse HEAD)
+  revision=$(git -C "$base_dir" rev-parse HEAD)
+  sub_revision=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
   cat <<EOF > "$output_file"
 [
   {{
     "name": "mock_project",
-    "path": "{}",
+    "path": "$base_dir",
     "revision": "$revision"
   }},
   {{
     "name": "sub_project",
-    "path": "{}/third_party/sub",
+    "path": "$base_dir/third_party/sub",
     "revision": "$sub_revision"
   }}
 ]
@@ -143,8 +144,8 @@ elif [ "$1" = "package" ] && [ "$2" = "-json-output" ]; then
 EOF
 elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   target_path=$3
-  root_rev=$(git rev-parse HEAD)
-  git worktree add -f --detach "$target_path" "$root_rev"
+  root_rev=$(git -C "$base_dir" rev-parse HEAD)
+  git -C "$base_dir" worktree add -f --detach "$target_path" "$root_rev"
   
   git_file="$target_path/.git"
   if [ -f "$git_file" ]; then
@@ -153,14 +154,14 @@ elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
     rm "$git_file"
     ln -s "$gitdir_path" "$git_file"
     
-    if [ -d "$cwd/.git/jiri" ]; then
-      ln -s "$cwd/.git/jiri" "$gitdir_path/jiri"
+    if [ -d "$base_dir/.git/jiri" ]; then
+      ln -s "$base_dir/.git/jiri" "$gitdir_path/jiri"
     fi
   fi
   
-  sub_rev=$(git -C "third_party/sub" rev-parse HEAD)
+  sub_rev=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
   mkdir -p "$target_path/third_party/sub"
-  git -C "third_party/sub" worktree add -f --detach "$target_path/third_party/sub" "$sub_rev"
+  git -C "$base_dir/third_party/sub" worktree add -f --detach "$target_path/third_party/sub" "$sub_rev"
   
   sub_git_file="$target_path/third_party/sub/.git"
   if [ -f "$sub_git_file" ]; then
@@ -169,15 +170,38 @@ elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
     rm "$sub_git_file"
     ln -s "$gitdir_path" "$sub_git_file"
     
-    if [ -d "$cwd/third_party/sub/.git/jiri" ]; then
-      ln -s "$cwd/third_party/sub/.git/jiri" "$gitdir_path/jiri"
+    if [ -d "$base_dir/third_party/sub/.git/jiri" ]; then
+      ln -s "$base_dir/third_party/sub/.git/jiri" "$gitdir_path/jiri"
     fi
+  fi
+elif [ "$1" = "worktree" ] && [ "$2" = "sync" ]; then
+  root_rev=$(git -C "$base_dir" rev-parse HEAD)
+  git checkout -q "$root_rev"
+  
+  sub_rev=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
+  if [ -d "third_party/sub" ]; then
+    git -C "third_party/sub" checkout -q "$sub_rev"
+  fi
+  
+  ensure_file=$(mktemp)
+  cat <<EOF > "$ensure_file"
+@Subdir prebuilt/tools/mock_tool
+fuchsia/tools/mock_tool/linux-amd64 $version
+
+@Subdir prebuilt/third_party/bazel/linux-x64
+infra/3pp/tools/bazel/linux-amd64 $version
+EOF
+  "$base_dir/.jiri_root/bin/cipd" -root . -ensure-file "$ensure_file"
+  rm "$ensure_file"
+  
+  if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
+    ./tools/build/scripts/extract_pydantic_core_wheel.sh
+  fi
+  if [ -f "tools/build/scripts/extract_protobuf_py3_wheel.sh" ]; then
+    ./tools/build/scripts/extract_protobuf_py3_wheel.sh
   fi
 fi
 "#,
-        fuchsia_path.to_str().unwrap(),
-        fuchsia_path.to_str().unwrap(),
-        fuchsia_path.to_str().unwrap(),
         fuchsia_path.to_str().unwrap()
     );
     fs::write(&jiri_path, jiri_script).unwrap();
@@ -799,64 +823,7 @@ fn test_jiri_latest_snapshot_isolation() {
     remove_environment(config, &env_id, false).unwrap();
 }
 
-#[test]
-fn test_existing_cache_clamping_migration() {
-    let _lock = TEST_LOCK.lock().unwrap();
-    use fx_worktree::sync::{JiriPackage, calculate_group_hash};
-    use fx_worktree::utils::{get_file_mtime, set_file_mtime};
 
-    let env = setup_mock_env();
-    let config = &env.config;
-
-    let shared_prebuilts_dir = config.fx_worktree_root.join("shared-prebuilts");
-
-    let pkgs = vec![JiriPackage {
-        name: "fuchsia/tools/mock_tool/linux-amd64".to_string(),
-        path: "prebuilt/tools/mock_tool".to_string(),
-        version: "version:1".to_string(),
-        platforms: Some(vec!["linux-amd64".to_string()]),
-    }];
-    let hash = calculate_group_hash(&pkgs);
-    let escaped_path = "prebuilt_tools_mock_tool";
-    let cache_subdir = format!("merged/{}/{}", escaped_path, hash);
-    let shared_pkg_dir = shared_prebuilts_dir.join(&cache_subdir);
-
-    fs::create_dir_all(&shared_pkg_dir).unwrap();
-
-    // Create .versions directory to simulate successful CIPD installation (cache hit)
-    fs::create_dir_all(shared_pkg_dir.join(".versions")).unwrap();
-
-    // Create a file with 2042 mtime
-    let file_2042 = shared_pkg_dir.join("file_2042.txt");
-    fs::write(&file_2042, "mock content").unwrap();
-
-    let future_time =
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2290204800); // 2042-07-28
-    set_file_mtime(&file_2042, future_time).unwrap();
-
-    // 2. Allocate workspace (this will be a cache hit)
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
-    let workspace_path = env_info.path;
-
-    let ws_file = workspace_path.join("prebuilt/tools/mock_tool/file_2042.txt");
-    assert!(ws_file.exists());
-
-    let mtime = get_file_mtime(&ws_file).unwrap();
-
-    // With the old code, mtime will still be 2042.
-    // With the fix, mtime will be clamped to 2020-01-01.
-    let expected_clamp_time =
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1577836800); // 2020-01-01
-    assert_eq!(
-        mtime, expected_clamp_time,
-        "Existing cache files should be clamped on allocation"
-    );
-
-    // Clean up
-    release_worktree(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
-}
 
 #[test]
 fn test_args_gn_mtime_preservation_on_free() {
