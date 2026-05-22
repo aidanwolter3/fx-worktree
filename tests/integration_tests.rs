@@ -208,7 +208,6 @@ EOF
   fi
 elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
   git clean -fdx \
-    -e .fx-worktree-completed \
     -e prebuilt \
     -e .jiri_root \
     -e .fx-build-dir \
@@ -292,8 +291,23 @@ if [ "$1" = "--dir" ]; then
 fi
 
 if [ "$1" = "set" ]; then
+  config=$2
+  if [ "$config" = "fail_config" ]; then
+    echo "mock fx set failure" >&2
+    exit 1
+  fi
   mkdir -p "$build_dir"
-  echo "mock_args = true" > "$build_dir/args.gn"
+  if [[ "$config" == *.* ]]; then
+    product=${config%.*}
+    board=${config#*.}
+  else
+    product=$config
+    board=""
+  fi
+  echo "build_info_product = \"$product\"" > "$build_dir/args.gn"
+  if [ -n "$board" ]; then
+    echo "build_info_board = \"$board\"" >> "$build_dir/args.gn"
+  fi
   touch "$build_dir/build.ninja"
 elif [ "$1" = "gen" ]; then
   echo "mock gen success"
@@ -419,7 +433,6 @@ fn test_full_lifecycle() {
     // 3. Test Worktree Release
     release_worktree(config, &env_info.environment_id).unwrap();
     assert!(env_info.path.exists()); // Path must remain!
-    assert!(env_info.path.join(".fx-worktree-completed").exists());
     assert!(!lease_file.exists()); // Lease must be deleted
 
     println!("--- List Worktrees after release ---");
@@ -980,3 +993,4 @@ fn test_release_by_agent_id() {
     remove_environment(config, &env_id1, false, false).unwrap();
     remove_environment(config, &env_id2, false, false).unwrap();
 }
+

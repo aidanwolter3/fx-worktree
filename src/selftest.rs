@@ -101,9 +101,8 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     };
 
     let env_path = test_config.environments_dir().join(&env_id);
-    let completed_file = env_path.join(".fx-worktree-completed");
-    let config_name_str = fs::read_to_string(&completed_file)
-        .with_context(|| format!("Failed to read config name from {:?}", completed_file))?;
+    let config_name_str = crate::utils::get_config_name(&env_path)
+        .context("Failed to get config name from worktree")?;
     let config_name = config_name_str.trim();
     println!("Test worktree path: {:?}", env_path);
 

@@ -49,7 +49,7 @@ pub fn sync_environment(
             return Ok(false);
         }
 
-        if !workspace_path.join(".fx-worktree-completed").exists() {
+        if !workspace_path.join(".jiri_root").exists() {
             return Ok(false);
         }
 

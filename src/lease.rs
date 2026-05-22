@@ -34,15 +34,15 @@ pub fn lease_environment(
         if path.is_dir() {
             if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
                 let id = dir_name;
-                let completed_file = path.join(".fx-worktree-completed");
-                if !completed_file.exists() {
-                    log::warn!("Skipping incomplete worktree {:?}", path);
-                    continue;
-                }
-                let current_config_name = fs::read_to_string(&completed_file)
-                    .with_context(|| format!("Failed to read {:?}", completed_file))?;
+                let current_config_name = match crate::utils::get_config_name(&path) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        log::warn!("Skipping worktree {:?} due to error reading config: {:?}", path, e);
+                        continue;
+                    }
+                };
 
-                if current_config_name.trim() == config_name {
+                if current_config_name == config_name {
                     let lease_file_name = format!("{}.lease", id);
                     let lease_file_path = config.leases_dir().join(&lease_file_name);
 

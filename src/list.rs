@@ -47,13 +47,11 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    let completed_file = path.join(".fx-worktree-completed");
-                    if !completed_file.exists() {
-                        continue;
-                    }
-                    let config_name = fs::read_to_string(&completed_file)
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_else(|_| "unknown".to_string());
+                    let config_name = crate::utils::get_config_name(&path)
+                        .unwrap_or_else(|e| {
+                            log::warn!("Failed to get config name for {:?}: {:?}", path, e);
+                            "unknown".to_string()
+                        });
 
                     let agent_id = active_leases.get(dir_name).cloned();
                     let status = if agent_id.is_some() {

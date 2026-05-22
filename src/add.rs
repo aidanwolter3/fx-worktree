@@ -91,12 +91,6 @@ pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Resul
         log::warn!("args.gn not found after fx set. This might happen if fx set was mocked.");
     }
 
-    // 6. Write completion marker
-    if let Err(e) = fs::write(env_path.join(".fx-worktree-completed"), config_name) {
-        cleanup();
-        return Err(e).with_context(|| format!("Failed to write completion marker"));
-    }
-
     if let Err(e) = config.record_last_active(&env_path) {
         cleanup();
         return Err(e);
