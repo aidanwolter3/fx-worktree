@@ -1,9 +1,9 @@
 use crate::config::Config;
 use crate::utils::run_command;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 
-pub fn remove_environment(config: &Config, id: &str, quiet: bool) -> Result<()> {
+pub fn remove_environment(config: &Config, id: &str, force: bool, quiet: bool) -> Result<()> {
     if std::path::Path::new(id).components().count() > 1 {
         return Err(anyhow!("Invalid worktree ID: {}", id));
     }

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -211,7 +211,8 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
     }
 
     if should_remove_worktree {
-        remove_environment(test_config, &env_id, false).context("Failed to remove worktree")?;
+        remove_environment(test_config, &env_id, false, false)
+            .context("Failed to remove worktree")?;
     } else {
         println!("Skipping worktree removal (reused worktree)");
     }

@@ -40,7 +40,10 @@ pub enum Commands {
     /// Remove a worktree and its dedicated outdir
     Remove {
         /// Worktree ID to remove (must be free)
-        id: String,
+        id: Option<String>,
+        /// Force removal even if the worktree is in an inconsistent state
+        #[arg(long, short)]
+        force: bool,
     },
     /// List worktrees
     List,

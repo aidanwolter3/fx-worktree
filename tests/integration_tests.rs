@@ -403,14 +403,12 @@ fn test_full_lifecycle() {
     list_environments(config, false).unwrap();
 
     // Test that we cannot delete the environment while leased
-    let delete_res = remove_environment(config, &env_id, false);
+    let delete_res = remove_environment(config, &env_id, false, false);
     assert!(delete_res.is_err());
-    assert!(
-        delete_res
-            .unwrap_err()
-            .to_string()
-            .contains("Cannot remove worktree")
-    );
+    assert!(delete_res
+        .unwrap_err()
+        .to_string()
+        .contains("Cannot remove worktree"));
 
     // 3. Test Worktree Release
     release_worktree(config, &env_info.environment_id).unwrap();
@@ -422,7 +420,7 @@ fn test_full_lifecycle() {
     list_environments(config, false).unwrap();
 
     // 4. Test Worktree Remove (fully cleans up)
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
     assert!(!env_path.exists()); // Directory is gone now
 
     println!("--- List Worktrees after remove ---");
@@ -489,7 +487,7 @@ fn test_git_symlink_conversion() {
     assert!(metadata.file_type().is_symlink());
 
     // 4. Delete (converts it back to file, and removes it)
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
     assert!(!env_path.exists());
 }
 
@@ -527,16 +525,12 @@ fn test_mtime_and_metadata_preservation() {
     let env_path = config.environments_dir().join(&env_id);
 
     // Verify metadata files were copied during create
-    assert!(
-        env_path
-            .join("sdk/ctf/build/internal/ctf_releases.gni")
-            .exists()
-    );
-    assert!(
-        env_path
-            .join("build/info/jiri_generated/commit_info")
-            .exists()
-    );
+    assert!(env_path
+        .join("sdk/ctf/build/internal/ctf_releases.gni")
+        .exists());
+    assert!(env_path
+        .join("build/info/jiri_generated/commit_info")
+        .exists());
     assert!(env_path.join("build/cipd.gni").exists());
 
     // 2. Allocate
@@ -560,16 +554,12 @@ fn test_mtime_and_metadata_preservation() {
     release_worktree(config, &env_info.environment_id).unwrap();
 
     // Verify metadata files STILL exist (not deleted by clean)
-    assert!(
-        env_path
-            .join("sdk/ctf/build/internal/ctf_releases.gni")
-            .exists()
-    );
-    assert!(
-        env_path
-            .join("build/info/jiri_generated/commit_info")
-            .exists()
-    );
+    assert!(env_path
+        .join("sdk/ctf/build/internal/ctf_releases.gni")
+        .exists());
+    assert!(env_path
+        .join("build/info/jiri_generated/commit_info")
+        .exists());
     assert!(env_path.join("build/cipd.gni").exists());
 
     // Verify index mtime is preserved
@@ -608,7 +598,7 @@ fn test_mtime_and_metadata_preservation() {
 
     // Clean up
     release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -671,7 +661,7 @@ fn test_parent_jiri_update() {
 
     // Clean up
     release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -741,7 +731,7 @@ fn test_prebuilt_isolation() {
 
     // Clean up
     release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -801,7 +791,7 @@ fn test_wheel_extraction_mtime_preservation() {
 
     // Clean up
     release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -841,10 +831,8 @@ fn test_jiri_latest_snapshot_isolation() {
 
     // Clean up
     release_worktree(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
-
-
 
 #[test]
 fn test_args_gn_mtime_preservation_on_free() {
@@ -880,10 +868,8 @@ fn test_args_gn_mtime_preservation_on_free() {
     );
 
     // Clean up
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
-
-
 
 #[test]
 fn test_nosync_and_sync() {
@@ -919,7 +905,7 @@ fn test_nosync_and_sync() {
 
     // Clean up
     release_worktree(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id, false).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -933,8 +919,8 @@ fn test_invalid_id_validation() {
     assert!(fx_worktree::locate::locate_path(config, Some("/absolute/path".to_string())).is_err());
 
     // Test remove_environment with invalid IDs
-    assert!(remove_environment(config, "../invalid", false).is_err());
-    assert!(remove_environment(config, "/absolute/path", false).is_err());
+    assert!(remove_environment(config, "../invalid", false, false).is_err());
+    assert!(remove_environment(config, "/absolute/path", false, false).is_err());
 
     // Test release_worktree with invalid IDs
     assert!(release_worktree(config, "../invalid").is_err());
@@ -985,6 +971,6 @@ fn test_release_by_agent_id() {
     release_worktree(config, &env_info1.environment_id).unwrap();
     release_worktree(config, &env_info2.environment_id).unwrap();
 
-    remove_environment(config, &env_id1, false).unwrap();
-    remove_environment(config, &env_id2, false).unwrap();
+    remove_environment(config, &env_id1, false, false).unwrap();
+    remove_environment(config, &env_id2, false, false).unwrap();
 }

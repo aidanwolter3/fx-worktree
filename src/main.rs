@@ -21,7 +21,28 @@ fn main() -> Result<()> {
 
     if cli.help || cli.command.is_none() {
         let mut cmd = Cli::command();
-        cmd.print_help()?;
+        let subcmd_name = cli.command.as_ref().map(|c| match c {
+            Commands::Add { .. } => "add",
+            Commands::Remove { .. } => "remove",
+            Commands::List => "list",
+            Commands::Lease { .. } => "lease",
+            Commands::Sync { .. } => "sync",
+            Commands::Release { .. } => "release",
+            Commands::Cd { .. } => "cd",
+            Commands::Locate { .. } => "locate",
+            Commands::SelfTest { .. } => "self-test",
+            Commands::Completions { .. } => "completions",
+        });
+
+        if let Some(name) = subcmd_name {
+            if let Some(subcmd) = cmd.find_subcommand_mut(name) {
+                subcmd.print_help()?;
+            } else {
+                cmd.print_help()?;
+            }
+        } else {
+            cmd.print_help()?;
+        }
         return Ok(());
     }
 
@@ -42,10 +63,21 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Commands::Remove { id } => {
+        Commands::Remove { id, force } => {
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    let mut cmd = Cli::command();
+                    let subcmd = cmd.find_subcommand_mut("remove").unwrap();
+                    println!("{}", subcmd.render_usage());
+                    return Err(anyhow::anyhow!(
+                        "error: the following required arguments were not provided:\n  <ID>"
+                    ));
+                }
+            };
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            remove::remove_environment(&config, &id, cli.json)?;
+            remove::remove_environment(&config, &id, force, cli.json)?;
             if cli.json {
                 println!("{{\"removed\":true,\"environment_id\":\"{}\"}}", id);
             } else {
