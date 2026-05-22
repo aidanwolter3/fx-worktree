@@ -8,17 +8,41 @@ pub fn remove_environment(config: &Config, id: &str, force: bool, quiet: bool) -
         return Err(anyhow!("Invalid worktree ID: {}", id));
     }
 
+    let resolved_path = match crate::locate::locate_path(config, Some(id.to_string())) {
+        Ok(path) => Some(path),
+        Err(e) => {
+            if force {
+                None
+            } else {
+                return Err(e);
+            }
+        }
+    };
+
+    let env_path = match &resolved_path {
+        Some(path) => path.clone(),
+        None => config.environments_dir().join(id),
+    };
+
+    let resolved_id = match &resolved_path {
+        Some(path) => path.file_name().unwrap().to_str().unwrap().to_string(),
+        None => id.to_string(),
+    };
+
     // 1. Find and handle lease
     let leases_dir = config.leases_dir();
     let mut lease_file = None;
     if leases_dir.exists() {
-        let suffix = format!("_{}.lease", id.split('_').next_back().unwrap_or(id));
         for entry in fs::read_dir(&leases_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lease") {
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                    if file_name.ends_with(&suffix) {
+                    let lease_id = file_name.strip_suffix(".lease").unwrap_or(file_name);
+                    if lease_id == resolved_id
+                        || lease_id.starts_with(&resolved_id)
+                        || lease_id.ends_with(&format!("_{}", resolved_id))
+                    {
                         lease_file = Some(path);
                         break;
                     }
@@ -30,21 +54,20 @@ pub fn remove_environment(config: &Config, id: &str, force: bool, quiet: bool) -
     if lease_file.is_some() && !force {
         return Err(anyhow!(
             "Cannot remove worktree {} because it is currently in use (leased).",
-            id
+            resolved_id
         ));
     }
 
-    let env_path = config.environments_dir().join(id);
     if !force && !env_path.exists() {
         return Err(anyhow!(
             "Environment {} does not exist at {:?}",
-            id,
+            resolved_id,
             env_path
         ));
     }
 
     if !quiet {
-        eprintln!("Deleting environment {}...", id);
+        eprintln!("Deleting environment {}...", resolved_id);
     }
 
     if force {

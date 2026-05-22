@@ -47,17 +47,13 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    let is_complete = path.join(".fx-worktree-completed").exists();
-                    if !is_complete {
+                    let completed_file = path.join(".fx-worktree-completed");
+                    if !completed_file.exists() {
                         continue;
                     }
-
-                    // Extract config name by splitting off the UUID suffix (separated by last underscore)
-                    let config_name = dir_name
-                        .rsplit_once('_')
-                        .map(|(cfg, _)| cfg)
-                        .unwrap_or("unknown")
-                        .to_string();
+                    let config_name = fs::read_to_string(&completed_file)
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|_| "unknown".to_string());
 
                     let agent_id = active_leases.get(dir_name).cloned();
                     let status = if agent_id.is_some() {

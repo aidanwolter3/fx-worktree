@@ -33,17 +33,16 @@ pub fn lease_environment(
         let path = entry.path();
         if path.is_dir() {
             if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                // Environment folder name is: <config>_<uuid>
-                // We check if it starts with config_name followed by underscore
-                let prefix = format!("{}_", config_name);
-                if dir_name.starts_with(&prefix) {
-                    let id = dir_name;
-                    let is_complete = path.join(".fx-worktree-completed").exists();
-                    if !is_complete {
-                        log::warn!("Skipping incomplete worktree {:?}", path);
-                        continue;
-                    }
+                let id = dir_name;
+                let completed_file = path.join(".fx-worktree-completed");
+                if !completed_file.exists() {
+                    log::warn!("Skipping incomplete worktree {:?}", path);
+                    continue;
+                }
+                let current_config_name = fs::read_to_string(&completed_file)
+                    .with_context(|| format!("Failed to read {:?}", completed_file))?;
 
+                if current_config_name.trim() == config_name {
                     let lease_file_name = format!("{}.lease", id);
                     let lease_file_path = config.leases_dir().join(&lease_file_name);
 
