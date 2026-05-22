@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -61,11 +61,11 @@ impl Config {
     }
 
     pub fn leases_dir(&self) -> PathBuf {
-        self.fx_worktree_root.join("leases")
+        self.fuchsia_dir.join(".jiri_root").join("leases")
     }
 
     pub fn environments_dir(&self) -> PathBuf {
-        self.fx_worktree_root.join("environments")
+        self.fuchsia_dir.join(".jiri_root").join("worktrees")
     }
 
     pub fn last_active_file(&self) -> PathBuf {
