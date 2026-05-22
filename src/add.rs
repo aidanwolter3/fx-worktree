@@ -1,18 +1,9 @@
 use crate::config::Config;
 use crate::utils::run_command;
-use anyhow::{Context, Result, anyhow};
-use rayon::prelude::*;
-use std::collections::BTreeMap;
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 use uuid::Uuid;
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct JiriProject {
-    name: String,
-    path: String,
-    revision: String,
-}
 
 pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Result<String> {
     let uuid = Uuid::new_v4().to_string();
@@ -94,11 +85,9 @@ pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Resul
 }
 
 fn provision_workspace(config: &Config, workspace_path: &Path, quiet: bool) -> Result<()> {
-    // 1. Parse Jiri State from base repository
     if !quiet {
-        eprintln!("Querying Fuchsia project structure...");
+        eprintln!("Provisioning worktree workspace...");
     }
-    let temp_jiri_json = std::env::temp_dir().join(format!("jiri_{}.json", Uuid::new_v4()));
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
     let jiri_cmd = if jiri_bin.exists() {
         jiri_bin.to_str().unwrap()
@@ -108,134 +97,11 @@ fn provision_workspace(config: &Config, workspace_path: &Path, quiet: bool) -> R
 
     run_command(
         jiri_cmd,
-        &["project", "-json-output", temp_jiri_json.to_str().unwrap()],
+        &["worktree", "add", workspace_path.to_str().unwrap()],
         &config.fuchsia_dir,
         &[],
     )
-    .context("Failed to run jiri project in base repo")?;
-
-    let jiri_json = fs::read_to_string(&temp_jiri_json).context("Failed to read jiri json")?;
-    let projects: Vec<JiriProject> =
-        serde_json::from_str(&jiri_json).context("Failed to parse Jiri JSON")?;
-    let _ = fs::remove_file(&temp_jiri_json);
-
-    let mut root_project = None;
-    let mut sub_projects = Vec::new();
-
-    for project in &projects {
-        let rel_path = Path::new(&project.path)
-            .strip_prefix(&config.fuchsia_dir)
-            .context("Failed to strip prefix from project path")?;
-        if rel_path.as_os_str().is_empty() {
-            root_project = Some(project);
-        } else {
-            sub_projects.push(project);
-        }
-    }
-
-    // 2. Provision Root Git Worktree
-    if let Some(root) = root_project {
-        log::info!("Provisioning root git worktree at {:?}", workspace_path);
-        run_command(
-            "git",
-            &[
-                "worktree",
-                "add",
-                "-f",
-                "--detach",
-                workspace_path.to_str().unwrap(),
-                &root.revision,
-            ],
-            Path::new(&root.path),
-            &[],
-        )
-        .with_context(|| "Failed to add root git worktree")?;
-        crate::utils::convert_gitdir_to_symlink(workspace_path)?;
-        let common_git = config.fuchsia_dir.join(".git");
-        crate::utils::exclude_from_git(&common_git, ".fx-worktree-completed")?;
-        crate::utils::exclude_from_git(&common_git, ".fx-build-dir")?;
-        crate::utils::exclude_from_git(&common_git, ".fx-root")?;
-    } else {
-        return Err(anyhow!("Root project not found in Jiri projects"));
-    }
-
-    // Copy .jiri_manifest if it exists in base checkout
-    let base_manifest = config.fuchsia_dir.join(".jiri_manifest");
-    let workspace_manifest = workspace_path.join(".jiri_manifest");
-    if base_manifest.exists() {
-        log::info!("Copying .jiri_manifest to workspace...");
-        fs::copy(&base_manifest, &workspace_manifest).with_context(|| {
-            format!("Failed to copy .jiri_manifest to {:?}", workspace_manifest)
-        })?;
-    }
-
-    // Group sub-projects by path depth
-    let mut groups: BTreeMap<usize, Vec<&JiriProject>> = BTreeMap::new();
-    for project in &sub_projects {
-        let rel_path = Path::new(&project.path)
-            .strip_prefix(&config.fuchsia_dir)
-            .context("Failed to strip prefix from project path")?;
-        let depth = rel_path.components().count();
-        groups.entry(depth).or_default().push(project);
-    }
-
-    // 3. Provision sub-projects group by group in parallel
-    for (depth, group) in groups {
-        log::info!(
-            "Provisioning sub-projects at depth {} (count: {})...",
-            depth,
-            group.len()
-        );
-        if !quiet {
-            eprintln!("Provisioning Git worktrees at depth {}...", depth);
-        }
-        group.par_iter().try_for_each(|project| -> Result<()> {
-            let rel_path = Path::new(&project.path)
-                .strip_prefix(&config.fuchsia_dir)
-                .context("Failed to strip prefix from project path")?;
-
-            let target_path = workspace_path.join(rel_path);
-
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory {:?}", parent))?;
-            }
-
-            run_command(
-                "git",
-                &[
-                    "worktree",
-                    "add",
-                    "-f",
-                    "--detach",
-                    target_path.to_str().unwrap(),
-                    &project.revision,
-                ],
-                Path::new(&project.path),
-                &[],
-            )
-            .with_context(|| format!("Failed to add git worktree for {}", project.name))?;
-            crate::utils::convert_gitdir_to_symlink(&target_path)?;
-
-            Ok(())
-        })?;
-    }
-
-    // 4. Isolate Toolchains (Symlink prebuilts & copy generated files)
-    if !quiet {
-        eprintln!("Isolating toolchains...");
-    }
-
-    let workspace_prebuilt = workspace_path.join("prebuilt");
-    fs::create_dir_all(&workspace_prebuilt).with_context(|| {
-        format!(
-            "Failed to create prebuilt directory {:?}",
-            workspace_prebuilt
-        )
-    })?;
-
-    // Copy Jiri generated files
-    crate::utils::copy_toolchain_metadata(config, workspace_path)?;
+    .context("Failed to run jiri worktree add")?;
 
     Ok(())
 }

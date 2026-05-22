@@ -84,6 +84,8 @@ fn setup_mock_env() -> TestEnv {
     fs::create_dir_all(&update_history_dir).unwrap();
     fs::write(update_history_dir.join("latest"), "<manifest></manifest>").unwrap();
     fs::write(fuchsia_path.join(".jiri_root/config"), "<config></config>").unwrap();
+    fs::create_dir_all(fuchsia_path.join(".git/jiri")).unwrap();
+    fs::create_dir_all(sub_path.join(".git/jiri")).unwrap();
 
     // 2. Create mock jiri
     let jiri_dir = fuchsia_path.join(".jiri_root/bin");
@@ -139,6 +141,38 @@ elif [ "$1" = "package" ] && [ "$2" = "-json-output" ]; then
   }}
 ]
 EOF
+elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  target_path=$3
+  root_rev=$(git rev-parse HEAD)
+  git worktree add -f --detach "$target_path" "$root_rev"
+  
+  git_file="$target_path/.git"
+  if [ -f "$git_file" ]; then
+    gitdir_line=$(head -n 1 "$git_file")
+    gitdir_path=${{gitdir_line#gitdir: }}
+    rm "$git_file"
+    ln -s "$gitdir_path" "$git_file"
+    
+    if [ -d "$cwd/.git/jiri" ]; then
+      ln -s "$cwd/.git/jiri" "$gitdir_path/jiri"
+    fi
+  fi
+  
+  sub_rev=$(git -C "third_party/sub" rev-parse HEAD)
+  mkdir -p "$target_path/third_party/sub"
+  git -C "third_party/sub" worktree add -f --detach "$target_path/third_party/sub" "$sub_rev"
+  
+  sub_git_file="$target_path/third_party/sub/.git"
+  if [ -f "$sub_git_file" ]; then
+    gitdir_line=$(head -n 1 "$sub_git_file")
+    gitdir_path=${{gitdir_line#gitdir: }}
+    rm "$sub_git_file"
+    ln -s "$gitdir_path" "$sub_git_file"
+    
+    if [ -d "$cwd/third_party/sub/.git/jiri" ]; then
+      ln -s "$cwd/third_party/sub/.git/jiri" "$gitdir_path/jiri"
+    fi
+  fi
 fi
 "#,
         fuchsia_path.to_str().unwrap(),
