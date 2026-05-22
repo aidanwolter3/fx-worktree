@@ -68,8 +68,10 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
         }
         let id = path.file_name().unwrap().to_str().unwrap().to_string();
         let temp_env_dir = test_config.environments_dir().join(&id);
-        std::os::unix::fs::symlink(&path, &temp_env_dir)
-            .with_context(|| format!("Failed to symlink {:?} to {:?}", path, temp_env_dir))?;
+        if path != temp_env_dir {
+            std::os::unix::fs::symlink(&path, &temp_env_dir)
+                .with_context(|| format!("Failed to symlink {:?} to {:?}", path, temp_env_dir))?;
+        }
         id
     } else {
         // It's an ID, verify it exists in the user's config root
@@ -91,18 +93,18 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
             ));
         }
         let temp_env_dir = test_config.environments_dir().join(&env_id_or_path);
-        std::os::unix::fs::symlink(&env_path, &temp_env_dir)
-            .with_context(|| format!("Failed to symlink {:?} to {:?}", env_path, temp_env_dir))?;
+        if env_path != temp_env_dir {
+            std::os::unix::fs::symlink(&env_path, &temp_env_dir)
+                .with_context(|| format!("Failed to symlink {:?} to {:?}", env_path, temp_env_dir))?;
+        }
         env_id_or_path
     };
 
-    // Extract config name from env_id (format is <config>_<uuid>)
-    let last_underscore = env_id
-        .rfind('_')
-        .context("Invalid worktree ID format. Expected <config>_<uuid>")?;
-    let config_name = &env_id[0..last_underscore];
-
     let env_path = test_config.environments_dir().join(&env_id);
+    let completed_file = env_path.join(".fx-worktree-completed");
+    let config_name_str = fs::read_to_string(&completed_file)
+        .with_context(|| format!("Failed to read config name from {:?}", completed_file))?;
+    let config_name = config_name_str.trim();
     println!("Test worktree path: {:?}", env_path);
 
     let target_label = "//:default";

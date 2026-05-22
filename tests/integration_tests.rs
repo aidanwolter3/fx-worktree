@@ -144,8 +144,14 @@ elif [ "$1" = "package" ] && [ "$2" = "-json-output" ]; then
 EOF
 elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   target_path=$3
+  if [ -z "$target_path" ]; then
+    id=$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')
+    target_path="$base_dir/.jiri_root/worktrees/$id"
+    echo "$target_path"
+  fi
   root_rev=$(git -C "$base_dir" rev-parse HEAD)
-  git -C "$base_dir" worktree add -f --detach "$target_path" "$root_rev"
+  mkdir -p "$(dirname "$target_path")"
+  git -C "$base_dir" worktree add -f --detach "$target_path" "$root_rev" >/dev/null
   
   git_file="$target_path/.git"
   if [ -f "$git_file" ]; then
@@ -161,7 +167,7 @@ elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   
   sub_rev=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
   mkdir -p "$target_path/third_party/sub"
-  git -C "$base_dir/third_party/sub" worktree add -f --detach "$target_path/third_party/sub" "$sub_rev"
+  git -C "$base_dir/third_party/sub" worktree add -f --detach "$target_path/third_party/sub" "$sub_rev" >/dev/null
   
   sub_git_file="$target_path/third_party/sub/.git"
   if [ -f "$sub_git_file" ]; then
