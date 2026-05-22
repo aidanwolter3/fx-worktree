@@ -110,7 +110,7 @@ pub fn lease_environment(
 
     // 2. Reuse the worktree (clean and checkout target revisions)
     if sync {
-        if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
+        if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet, false) {
             rollback();
             return Err(e);
         }

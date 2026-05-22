@@ -38,7 +38,7 @@ pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Resul
     }
 
     // Run sync to get prebuilts and ensure correct revisions (required for fx set)
-    if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
+    if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet, true) {
         cleanup();
         return Err(e);
     }

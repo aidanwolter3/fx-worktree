@@ -3,9 +3,9 @@ use crate::utils::{copy_toolchain_metadata, find_worktrees, get_file_mtime, run_
 use anyhow::{Context, Result};
 use std::path::Path;
 
-pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool) -> Result<()> {
+pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool, force: bool) -> Result<()> {
     let path = crate::locate::locate_path(config, Some(id.to_string()))?;
-    sync_environment(config, id, &path, quiet)
+    sync_environment(config, id, &path, quiet, force)
 }
 
 pub fn sync_environment(
@@ -13,6 +13,7 @@ pub fn sync_environment(
     env_id: &str,
     workspace_path: &Path,
     quiet: bool,
+    force: bool,
 ) -> Result<()> {
     let workspace_path_buf = workspace_path
         .canonicalize()
@@ -34,24 +35,27 @@ pub fn sync_environment(
 
     // 1. Optimize no-op check: Compare HEAD of parent repo with HEAD of workspace root
     // and check if all worktrees are clean.
-    let is_noop = (|| -> Result<bool> {
-        let parent_head = run_command("git", &["rev-parse", "HEAD"], &config.fuchsia_dir, &[])?;
-        let parent_head_sha = String::from_utf8_lossy(&parent_head.stdout)
-            .trim()
-            .to_string();
+    let is_noop = if force {
+        false
+    } else {
+        (|| -> Result<bool> {
+            let parent_head = run_command("git", &["rev-parse", "HEAD"], &config.fuchsia_dir, &[])?;
+            let parent_head_sha = String::from_utf8_lossy(&parent_head.stdout)
+                .trim()
+                .to_string();
 
-        let workspace_head = run_command("git", &["rev-parse", "HEAD"], workspace_path, &[])?;
-        let workspace_head_sha = String::from_utf8_lossy(&workspace_head.stdout)
-            .trim()
-            .to_string();
+            let workspace_head = run_command("git", &["rev-parse", "HEAD"], workspace_path, &[])?;
+            let workspace_head_sha = String::from_utf8_lossy(&workspace_head.stdout)
+                .trim()
+                .to_string();
 
-        if parent_head_sha != workspace_head_sha {
-            return Ok(false);
-        }
+            if parent_head_sha != workspace_head_sha {
+                return Ok(false);
+            }
 
-        if !workspace_path.join(".jiri_root").exists() {
-            return Ok(false);
-        }
+            if !workspace_path.join(".jiri_root").exists() {
+                return Ok(false);
+            }
 
         // Check if all worktrees are clean
         for wt in &worktrees {
@@ -68,7 +72,8 @@ pub fn sync_environment(
 
         Ok(true)
     })()
-    .unwrap_or(false);
+    .unwrap_or(false)
+    };
 
     if is_noop {
         log::info!("Environment {} is already synced (no-op).", env_id);
@@ -133,6 +138,8 @@ pub fn sync_environment(
             }
         }
     }
+
+
 
     Ok(())
 }

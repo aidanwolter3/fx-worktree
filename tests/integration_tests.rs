@@ -253,6 +253,56 @@ elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
   restore_git "$target_path"
   git worktree remove -f "$target_path"
   rm -rf "$target_path"
+  
+  # Run GC
+  commit_msg=$(git -C "$base_dir" log -n 1 --format=%s 2>/dev/null || echo "")
+  parent_version="version:1"
+  if [ "$commit_msg" = "bump root" ] || [ "$commit_msg" = "bump sub" ]; then
+    if git -C "$base_dir" log --format=%s | grep -q "bump root"; then
+      parent_version="version:2"
+    fi
+  fi
+  
+  used_versions=""
+  if [ -d "$base_dir/.jiri_root/worktrees" ]; then
+    for wt in "$base_dir/.jiri_root/worktrees"/*; do
+      if [ -d "$wt" ] && [ "$wt" != "$target_path" ]; then
+        if [ -L "$wt/prebuilt/tools/mock_tool" ]; then
+          target=$(readlink "$wt/prebuilt/tools/mock_tool")
+          ver=$(basename "$target")
+          used_versions="$used_versions $ver"
+        fi
+      fi
+    done
+  fi
+  
+  cache_dir="$base_dir/.jiri_root/prebuilts"
+  if [ -d "$cache_dir" ]; then
+    cleanup_package_cache() {{
+      local pkg_cache_dir=$1
+      if [ -d "$pkg_cache_dir" ]; then
+        for ver_dir in "$pkg_cache_dir"/*; do
+          if [ -d "$ver_dir" ]; then
+            local ver=$(basename "$ver_dir")
+            local keep=false
+            if [ "$ver" = "$parent_version" ]; then
+              keep=true
+            fi
+            for u in $used_versions; do
+              if [ "$ver" = "$u" ]; then
+                keep=true
+              fi
+            done
+            if [ "$keep" = false ]; then
+              rm -rf "$ver_dir"
+            fi
+          fi
+        done
+      fi
+    }}
+    cleanup_package_cache "$cache_dir/prebuilt/tools/mock_tool"
+    cleanup_package_cache "$cache_dir/prebuilt/third_party/bazel/linux-x64"
+  fi
 fi
 "#,
         fuchsia_path.to_str().unwrap()
@@ -779,9 +829,19 @@ fn test_prebuilt_isolation() {
         "mock_content for fuchsia/tools/mock_tool/linux-amd64 version:2\n"
     );
 
+    // Verify cache before remove
+    let cache_dir = env.config.fuchsia_dir.join(".jiri_root/prebuilts");
+    let mock_tool_cache = cache_dir.join("prebuilt/tools/mock_tool");
+    assert!(mock_tool_cache.join("version:1").exists());
+    assert!(mock_tool_cache.join("version:2").exists());
+
     // Clean up
     release_worktree(config, &env_info_2.environment_id).unwrap();
     remove_environment(config, &env_id, false, false).unwrap();
+
+    // Verify GC cleaned up unused versions from cache
+    assert!(!mock_tool_cache.join("version:1").exists(), "version:1 should be GC'ed");
+    assert!(mock_tool_cache.join("version:2").exists(), "version:2 should be kept (parent uses it)");
 }
 
 #[test]
@@ -948,7 +1008,7 @@ fn test_nosync_and_sync() {
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello");
 
     // 4. Run sync
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true).unwrap();
+    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false).unwrap();
 
     // Verify that workspace dummy.txt is now "hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
