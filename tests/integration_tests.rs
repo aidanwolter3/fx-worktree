@@ -181,13 +181,8 @@ elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
     fi
   fi
 elif [ "$1" = "worktree" ] && [ "$2" = "sync" ]; then
-  root_rev=$(git -C "$base_dir" rev-parse HEAD)
-  git checkout -q "$root_rev"
-  
-  sub_rev=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
-  if [ -d "third_party/sub" ]; then
-    git -C "third_party/sub" checkout -q "$sub_rev"
-  fi
+  # Simulated buggy jiri: do not checkout parent revisions
+
   
   ensure_file=$(mktemp)
   cat <<EOF > "$ensure_file"
@@ -983,6 +978,10 @@ fn test_args_gn_mtime_preservation_on_free() {
 
 #[test]
 fn test_nosync_and_sync() {
+    // This test verifies that the `sync` command correctly aligns the worktree's projects
+    // to match the parent repository's local git revisions.
+    // The mock `jiri worktree sync` is simulated to be buggy (doing nothing to update revisions).
+    // Thus, any revision update is driven by our manual project alignment logic.
     let _lock = TEST_LOCK.lock().unwrap();
     let env = setup_mock_env();
     let config = &env.config;

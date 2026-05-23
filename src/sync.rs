@@ -2,6 +2,8 @@ use crate::config::Config;
 use crate::utils::{copy_toolchain_metadata, find_worktrees, get_file_mtime, run_command, set_file_mtime};
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::fs::File;
+use serde::Deserialize;
 
 pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool, force: bool) -> Result<()> {
     let path = crate::locate::locate_path(config, Some(id.to_string()))?;
@@ -122,6 +124,9 @@ pub fn sync_environment(
     )
     .context("Failed to run jiri worktree sync")?;
 
+    // Align with parent's local state
+    align_worktree_with_parent(config, workspace_path)?;
+
     // Restore index mtimes for unchanged and clean worktrees
     for (wt, index_path, mtime_opt, old_head_opt) in wt_states {
         if let (Some(mtime), Some(old_head)) = (mtime_opt, old_head_opt) {
@@ -140,6 +145,68 @@ pub fn sync_environment(
     }
 
 
+
+    Ok(())
+}
+
+#[derive(Deserialize, Debug)]
+struct JiriProject {
+    name: String,
+    path: String,
+    revision: String,
+}
+
+fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<()> {
+    let temp_file = tempfile::NamedTempFile::new()?;
+    let temp_path = temp_file.path().to_str().unwrap();
+
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
+    } else {
+        "jiri"
+    };
+
+    run_command(
+        jiri_cmd,
+        &["project", "-json-output", temp_path],
+        &config.fuchsia_dir,
+        &[],
+    ).context("Failed to run jiri project in parent")?;
+
+    let file = File::open(temp_path)?;
+    let projects: Vec<JiriProject> = serde_json::from_reader(file)
+        .context("Failed to parse jiri project JSON")?;
+
+    for project in projects {
+        let parent_project_path = Path::new(&project.path);
+        let rel_path = match parent_project_path.strip_prefix(&config.fuchsia_dir) {
+            Ok(p) => p,
+            Err(_) => {
+                log::warn!("Project path {:?} is not under fuchsia_dir {:?}", parent_project_path, config.fuchsia_dir);
+                continue;
+            }
+        };
+
+        let workspace_project_path = workspace_path.join(rel_path);
+
+        if workspace_project_path.exists() {
+            log::info!(
+                "Aligning project {} to revision {} in {:?}",
+                project.name,
+                project.revision,
+                workspace_project_path
+            );
+            run_command(
+                "git",
+                &["checkout", &project.revision],
+                &workspace_project_path,
+                &[],
+            ).with_context(|| format!("Failed to checkout revision {} in {:?}", project.revision, workspace_project_path))?;
+        } else {
+             log::warn!("Workspace project path {:?} does not exist", workspace_project_path);
+        }
+    }
 
     Ok(())
 }
