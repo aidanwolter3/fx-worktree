@@ -99,24 +99,31 @@ base_dir="{0}"
 cwd=$(pwd)
 commit_msg=$(git -C "$base_dir" log -n 1 --format=%s 2>/dev/null || echo "")
 version="version:1"
-if [ "$commit_msg" = "bump root" ]; then
-  version="version:2"
+if [ "$commit_msg" = "bump root" ] || [ "$commit_msg" = "bump sub" ]; then
+  if git -C "$base_dir" log --format=%s | grep -q "bump root"; then
+    version="version:2"
+  fi
 fi
 
 if [ "$1" = "project" ] && [ "$2" = "-json-output" ]; then
   output_file=$3
-  revision=$(git -C "$base_dir" rev-parse HEAD)
-  sub_revision=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
+  if [[ "$cwd" == *"/worktrees/"* ]]; then
+    project_base="$cwd"
+  else
+    project_base="$base_dir"
+  fi
+  revision=$(git -C "$project_base" rev-parse HEAD 2>/dev/null || echo "unknown")
+  sub_revision=$(git -C "$project_base/third_party/sub" rev-parse HEAD 2>/dev/null || echo "unknown")
   cat <<EOF > "$output_file"
 [
   {{
     "name": "mock_project",
-    "path": "$base_dir",
+    "path": "$project_base",
     "revision": "$revision"
   }},
   {{
     "name": "sub_project",
-    "path": "$base_dir/third_party/sub",
+    "path": "$project_base/third_party/sub",
     "revision": "$sub_revision"
   }}
 ]
@@ -1065,6 +1072,48 @@ fn test_nosync_and_sync() {
 
     // Verify that workspace dummy.txt is now "hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
+
+    // Clean up
+    release_worktree(config, &env_info.environment_id).unwrap();
+    remove_environment(config, &env_id, false, false).unwrap();
+}
+
+#[test]
+fn test_sync_on_subproject_change() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create environment
+    let env_id = add_environment(config, "mock_config", false).unwrap();
+
+    // 2. Allocate with sync = false
+    let env_info = lease_environment(config, "mock_config", "test_agent", false, true).unwrap();
+
+    // Verify initial state of sub-project
+    let ws_sub_dummy = env_info.path.join("third_party/sub/sub_dummy.txt");
+    assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello");
+
+    // 3. Update sub-project in parent repo
+    let parent_sub = env.config.fuchsia_dir.join("third_party/sub");
+    let sub_dummy = parent_sub.join("sub_dummy.txt");
+    fs::write(&sub_dummy, "sub hello v2").unwrap();
+    run_setup_cmd("git", &["add", "sub_dummy.txt"], &parent_sub);
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "bump sub"],
+        &parent_sub,
+    );
+
+    // Verify that workspace sub-project is STILL "sub hello" (not updated yet)
+    assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello");
+
+    // 4. Run sync (without force)
+    // This should NOT be a no-op because the sub-project revision changed.
+    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false).unwrap();
+
+    // Verify that workspace sub-project is now "sub hello v2" (updated)
+    assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello v2");
 
     // Clean up
     release_worktree(config, &env_info.environment_id).unwrap();
