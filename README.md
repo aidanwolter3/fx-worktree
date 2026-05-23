@@ -181,6 +181,10 @@ When an environment is no longer needed:
 
 ---
 
+## Prerequisites
+
+`fx-worktree` leverages optimized Jiri commands. Ensure you are using a recent version of `jiri` that supports parallel worktree synchronization and clean operations.
+
 ## Installation
 
 Compile and install the binary locally:
