@@ -220,10 +220,7 @@ EOF
   
   rm "$ensure_file"
   
-  touch sdk/ctf/build/internal/ctf_releases.gni
-  touch build/info/jiri_generated/commit_info
-  touch build/cipd.gni
-  touch .jiri_manifest
+
 
   if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
     ./tools/build/scripts/extract_pydantic_core_wheel.sh
@@ -244,10 +241,7 @@ elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
   if [ -d "third_party/sub" ]; then
     git -C "third_party/sub" clean -fdx
   fi
-  touch sdk/ctf/build/internal/ctf_releases.gni
-  touch build/info/jiri_generated/commit_info
-  touch build/cipd.gni
-  touch .jiri_manifest
+
 elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
   target_path=$3
   restore_git() {{
@@ -518,10 +512,12 @@ fn test_full_lifecycle() {
     // Test that we cannot delete the environment while leased
     let delete_res = remove_environment(config, &env_id, false, false);
     assert!(delete_res.is_err());
-    assert!(delete_res
-        .unwrap_err()
-        .to_string()
-        .contains("Cannot remove worktree"));
+    assert!(
+        delete_res
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot remove worktree")
+    );
 
     // 3. Test Worktree Release
     release_worktree(config, &env_info.environment_id).unwrap();
@@ -678,11 +674,17 @@ fn test_mtime_and_metadata_preservation() {
 
     // Verify index mtime is preserved
     let index_mtime_after_free = fs::metadata(&index_path).unwrap().modified().unwrap();
-    assert_eq!(index_mtime_before, index_mtime_after_free, "Index mtime should be preserved after free");
+    assert_eq!(
+        index_mtime_before, index_mtime_after_free,
+        "Index mtime should be preserved after free"
+    );
 
     // Verify dummy.txt mtime is preserved
     let dummy_mtime_after_free = fs::metadata(&dummy_path).unwrap().modified().unwrap();
-    assert_eq!(dummy_mtime_before, dummy_mtime_after_free, "dummy.txt mtime should be preserved after free");
+    assert_eq!(
+        dummy_mtime_before, dummy_mtime_after_free,
+        "dummy.txt mtime should be preserved after free"
+    );
 
     // Verify metadata mtimes are preserved after free
     let ctf_mtime_after_free = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
@@ -690,10 +692,22 @@ fn test_mtime_and_metadata_preservation() {
     let cipd_mtime_after_free = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
     let jiri_manifest_mtime_after_free = fs::metadata(&jiri_manifest).unwrap().modified().unwrap();
 
-    assert_eq!(ctf_mtime_before, ctf_mtime_after_free, "ctf_releases.gni mtime should be preserved after free");
-    assert_eq!(commit_info_mtime_before, commit_info_mtime_after_free, "commit_info mtime should be preserved after free");
-    assert_eq!(cipd_mtime_before, cipd_mtime_after_free, "cipd.gni mtime should be preserved after free");
-    assert_eq!(jiri_manifest_mtime_before, jiri_manifest_mtime_after_free, "jiri_manifest mtime should be preserved after free");
+    assert_eq!(
+        ctf_mtime_before, ctf_mtime_after_free,
+        "ctf_releases.gni mtime should be preserved after free"
+    );
+    assert_eq!(
+        commit_info_mtime_before, commit_info_mtime_after_free,
+        "commit_info mtime should be preserved after free"
+    );
+    assert_eq!(
+        cipd_mtime_before, cipd_mtime_after_free,
+        "cipd.gni mtime should be preserved after free"
+    );
+    assert_eq!(
+        jiri_manifest_mtime_before, jiri_manifest_mtime_after_free,
+        "jiri_manifest mtime should be preserved after free"
+    );
 
     // Record mtimes before sync
     let ctf_mtime_before_sync = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
@@ -709,11 +723,17 @@ fn test_mtime_and_metadata_preservation() {
 
     // Verify index mtime is preserved
     let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
-    assert_eq!(index_mtime_before, index_mtime_after_alloc, "Index mtime should be preserved after allocate");
+    assert_eq!(
+        index_mtime_before, index_mtime_after_alloc,
+        "Index mtime should be preserved after allocate"
+    );
 
     // Verify dummy.txt mtime is preserved
     let dummy_mtime_after_alloc = fs::metadata(&dummy_path).unwrap().modified().unwrap();
-    assert_eq!(dummy_mtime_before, dummy_mtime_after_alloc, "dummy.txt mtime should be preserved after allocate");
+    assert_eq!(
+        dummy_mtime_before, dummy_mtime_after_alloc,
+        "dummy.txt mtime should be preserved after allocate"
+    );
 
     // Verify metadata mtimes are preserved after sync
     let ctf_mtime_after_sync = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
@@ -721,10 +741,22 @@ fn test_mtime_and_metadata_preservation() {
     let cipd_mtime_after_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
     let jiri_manifest_mtime_after_sync = fs::metadata(&jiri_manifest).unwrap().modified().unwrap();
 
-    assert_eq!(ctf_mtime_before_sync, ctf_mtime_after_sync, "ctf_releases.gni mtime should be preserved after sync");
-    assert_eq!(commit_info_mtime_before_sync, commit_info_mtime_after_sync, "commit_info mtime should be preserved after sync");
-    assert_eq!(cipd_mtime_before_sync, cipd_mtime_after_sync, "cipd.gni mtime should be preserved after sync");
-    assert_eq!(jiri_manifest_mtime_before_sync, jiri_manifest_mtime_after_sync, "jiri_manifest mtime should be preserved after sync");
+    assert_eq!(
+        ctf_mtime_before_sync, ctf_mtime_after_sync,
+        "ctf_releases.gni mtime should be preserved after sync"
+    );
+    assert_eq!(
+        commit_info_mtime_before_sync, commit_info_mtime_after_sync,
+        "commit_info mtime should be preserved after sync"
+    );
+    assert_eq!(
+        cipd_mtime_before_sync, cipd_mtime_after_sync,
+        "cipd.gni mtime should be preserved after sync"
+    );
+    assert_eq!(
+        jiri_manifest_mtime_before_sync, jiri_manifest_mtime_after_sync,
+        "jiri_manifest mtime should be preserved after sync"
+    );
 
     // 5. Test that mtime is NOT preserved if content changes
     // Modify a file in parent
@@ -735,7 +767,11 @@ fn test_mtime_and_metadata_preservation() {
     let dummy_parent_file = env.config.fuchsia_dir.join("dummy.txt");
     fs::write(&dummy_parent_file, "force sync change").unwrap();
     run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
-    run_setup_cmd("git", &["commit", "-m", "force sync"], &env.config.fuchsia_dir);
+    run_setup_cmd(
+        "git",
+        &["commit", "-m", "force sync"],
+        &env.config.fuchsia_dir,
+    );
 
     // Release env_info_2 first
     release_worktree(config, &env_info_2.environment_id).unwrap();
@@ -750,7 +786,10 @@ fn test_mtime_and_metadata_preservation() {
     let env_info_3 = lease_environment(config, "mock_config", "test_agent_3", true, true).unwrap();
 
     let cipd_mtime_after_change_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
-    assert_ne!(cipd_mtime_before_change_sync, cipd_mtime_after_change_sync, "cipd.gni mtime should NOT be preserved if content changed");
+    assert_ne!(
+        cipd_mtime_before_change_sync, cipd_mtime_after_change_sync,
+        "cipd.gni mtime should NOT be preserved if content changed"
+    );
 
     // Clean up
     release_worktree(config, &env_info_3.environment_id).unwrap();
@@ -896,8 +935,14 @@ fn test_prebuilt_isolation() {
     remove_environment(config, &env_id, false, false).unwrap();
 
     // Verify GC cleaned up unused versions from cache
-    assert!(!mock_tool_cache.join("version:1").exists(), "version:1 should be GC'ed");
-    assert!(mock_tool_cache.join("version:2").exists(), "version:2 should be kept (parent uses it)");
+    assert!(
+        !mock_tool_cache.join("version:1").exists(),
+        "version:1 should be GC'ed"
+    );
+    assert!(
+        mock_tool_cache.join("version:2").exists(),
+        "version:2 should be kept (parent uses it)"
+    );
 }
 
 #[test]
@@ -1068,7 +1113,8 @@ fn test_nosync_and_sync() {
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello");
 
     // 4. Run sync
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false).unwrap();
+    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false)
+        .unwrap();
 
     // Verify that workspace dummy.txt is now "hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
@@ -1099,18 +1145,15 @@ fn test_sync_on_subproject_change() {
     let sub_dummy = parent_sub.join("sub_dummy.txt");
     fs::write(&sub_dummy, "sub hello v2").unwrap();
     run_setup_cmd("git", &["add", "sub_dummy.txt"], &parent_sub);
-    run_setup_cmd(
-        "git",
-        &["commit", "-m", "bump sub"],
-        &parent_sub,
-    );
+    run_setup_cmd("git", &["commit", "-m", "bump sub"], &parent_sub);
 
     // Verify that workspace sub-project is STILL "sub hello" (not updated yet)
     assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello");
 
     // 4. Run sync (without force)
     // This should NOT be a no-op because the sub-project revision changed.
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false).unwrap();
+    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false)
+        .unwrap();
 
     // Verify that workspace sub-project is now "sub hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello v2");
@@ -1204,7 +1247,11 @@ fn test_add_failure_cleanup() {
             .unwrap()
             .map(|e| e.unwrap().path())
             .collect();
-        assert!(entries.is_empty(), "Environments directory should be empty after failure, but contains: {:?}", entries);
+        assert!(
+            entries.is_empty(),
+            "Environments directory should be empty after failure, but contains: {:?}",
+            entries
+        );
     }
 
     // Verify Jiri worktrees are cleaned up.
@@ -1214,8 +1261,15 @@ fn test_add_failure_cleanup() {
         .output()
         .expect("failed to run git worktree list");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let worktree_count = stdout.lines().filter(|l| l.starts_with("worktree ")).count();
-    assert_eq!(worktree_count, 1, "There should be only 1 git worktree (the main repo), but found: {}", stdout);
+    let worktree_count = stdout
+        .lines()
+        .filter(|l| l.starts_with("worktree "))
+        .count();
+    assert_eq!(
+        worktree_count, 1,
+        "There should be only 1 git worktree (the main repo), but found: {}",
+        stdout
+    );
 
     let output_sub = Command::new("git")
         .args(&["worktree", "list", "--porcelain"])
@@ -1223,7 +1277,13 @@ fn test_add_failure_cleanup() {
         .output()
         .expect("failed to run git worktree list in subproject");
     let stdout_sub = String::from_utf8_lossy(&output_sub.stdout);
-    let worktree_count_sub = stdout_sub.lines().filter(|l| l.starts_with("worktree ")).count();
-    assert_eq!(worktree_count_sub, 1, "Subproject should have only 1 git worktree, but found: {}", stdout_sub);
+    let worktree_count_sub = stdout_sub
+        .lines()
+        .filter(|l| l.starts_with("worktree "))
+        .count();
+    assert_eq!(
+        worktree_count_sub, 1,
+        "Subproject should have only 1 git worktree, but found: {}",
+        stdout_sub
+    );
 }
-

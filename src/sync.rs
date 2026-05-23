@@ -1,13 +1,12 @@
 use crate::config::Config;
 use crate::utils::{
     copy_toolchain_metadata, find_worktrees, get_file_mtime, run_command, set_file_mtime,
-    MetadataMtimePreserver,
 };
 use anyhow::{Context, Result};
-use std::path::Path;
-use std::fs::File;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs::File;
+use std::path::Path;
 
 pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool, force: bool) -> Result<()> {
     let path = crate::locate::locate_path(config, Some(id.to_string()))?;
@@ -87,21 +86,16 @@ pub fn sync_environment(
             }
 
             // Check if all worktrees are clean
-        for wt in &worktrees {
-            let status = run_command(
-                "git",
-                &["status", "--porcelain", "-uno"],
-                wt,
-                &[],
-            )?;
-            if !status.stdout.is_empty() {
-                return Ok(false);
+            for wt in &worktrees {
+                let status = run_command("git", &["status", "--porcelain", "-uno"], wt, &[])?;
+                if !status.stdout.is_empty() {
+                    return Ok(false);
+                }
             }
-        }
 
-        Ok(true)
-    })()
-    .unwrap_or(false)
+            Ok(true)
+        })()
+        .unwrap_or(false)
     };
 
     if is_noop {
@@ -118,9 +112,6 @@ pub fn sync_environment(
     if !quiet {
         eprintln!("Syncing environment {}...", env_id);
     }
-
-    let mut metadata_preserver = MetadataMtimePreserver::new(workspace_path);
-    metadata_preserver.record().context("Failed to record metadata mtimes")?;
 
     // Record index mtimes and HEADs before sync (for partial restoration)
     let mut wt_states = Vec::new();
@@ -146,13 +137,8 @@ pub fn sync_environment(
         "jiri"
     };
 
-    run_command(
-        jiri_cmd,
-        &["worktree", "sync"],
-        workspace_path,
-        &[],
-    )
-    .context("Failed to run jiri worktree sync")?;
+    run_command(jiri_cmd, &["worktree", "sync"], workspace_path, &[])
+        .context("Failed to run jiri worktree sync")?;
 
     // Align with parent's local state
     align_worktree_with_parent(config, workspace_path)?;
@@ -167,14 +153,16 @@ pub fn sync_environment(
                 let status = run_command("git", &["status", "--porcelain", "-uno"], &wt, &[])?;
                 if status.stdout.is_empty() {
                     if let Err(e) = set_file_mtime(&index_path, mtime) {
-                        log::warn!("Failed to restore index mtime for {:?}: {:?}", index_path, e);
+                        log::warn!(
+                            "Failed to restore index mtime for {:?}: {:?}",
+                            index_path,
+                            e
+                        );
                     }
                 }
             }
         }
     }
-
-    metadata_preserver.restore().context("Failed to restore metadata mtimes")?;
 
     Ok(())
 }
@@ -197,16 +185,12 @@ fn get_jiri_projects(config: &Config, dir: &Path) -> Result<Vec<JiriProject>> {
         "jiri"
     };
 
-    run_command(
-        jiri_cmd,
-        &["project", "-json-output", temp_path],
-        dir,
-        &[],
-    ).context(format!("Failed to run jiri project in {:?}", dir))?;
+    run_command(jiri_cmd, &["project", "-json-output", temp_path], dir, &[])
+        .context(format!("Failed to run jiri project in {:?}", dir))?;
 
     let file = File::open(temp_path)?;
-    let projects: Vec<JiriProject> = serde_json::from_reader(file)
-        .context("Failed to parse jiri project JSON")?;
+    let projects: Vec<JiriProject> =
+        serde_json::from_reader(file).context("Failed to parse jiri project JSON")?;
     Ok(projects)
 }
 
@@ -218,7 +202,11 @@ fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<
         let rel_path = match parent_project_path.strip_prefix(&config.fuchsia_dir) {
             Ok(p) => p,
             Err(_) => {
-                log::warn!("Project path {:?} is not under fuchsia_dir {:?}", parent_project_path, config.fuchsia_dir);
+                log::warn!(
+                    "Project path {:?} is not under fuchsia_dir {:?}",
+                    parent_project_path,
+                    config.fuchsia_dir
+                );
                 continue;
             }
         };
@@ -237,9 +225,18 @@ fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<
                 &["checkout", &project.revision],
                 &workspace_project_path,
                 &[],
-            ).with_context(|| format!("Failed to checkout revision {} in {:?}", project.revision, workspace_project_path))?;
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to checkout revision {} in {:?}",
+                    project.revision, workspace_project_path
+                )
+            })?;
         } else {
-             log::warn!("Workspace project path {:?} does not exist", workspace_project_path);
+            log::warn!(
+                "Workspace project path {:?} does not exist",
+                workspace_project_path
+            );
         }
     }
 
