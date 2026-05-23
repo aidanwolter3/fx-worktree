@@ -37,7 +37,11 @@ pub fn lease_environment(
                 let current_config_name = match crate::utils::get_config_name(&path) {
                     Ok(name) => name,
                     Err(e) => {
-                        log::warn!("Skipping worktree {:?} due to error reading config: {:?}", path, e);
+                        log::warn!(
+                            "Skipping worktree {:?} due to error reading config: {:?}",
+                            path,
+                            e
+                        );
                         continue;
                     }
                 };
@@ -110,7 +114,7 @@ pub fn lease_environment(
 
     // 2. Reuse the worktree (clean and checkout target revisions)
     if sync {
-        if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet, false) {
+        if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
             rollback();
             return Err(e);
         }

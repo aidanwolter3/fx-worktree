@@ -1,16 +1,11 @@
 use crate::config::Config;
-use crate::utils::{
-    copy_toolchain_metadata, find_worktrees, get_file_mtime, run_command, set_file_mtime,
-};
+use crate::utils::{copy_toolchain_metadata, run_command};
 use anyhow::{Context, Result};
-use serde::Deserialize;
-use std::collections::HashMap;
-use std::fs::File;
 use std::path::Path;
 
-pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool, force: bool) -> Result<()> {
+pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool) -> Result<()> {
     let path = crate::locate::locate_path(config, Some(id.to_string()))?;
-    sync_environment(config, id, &path, quiet, force)
+    sync_environment(config, id, &path, quiet)
 }
 
 pub fn sync_environment(
@@ -18,112 +13,14 @@ pub fn sync_environment(
     env_id: &str,
     workspace_path: &Path,
     quiet: bool,
-    force: bool,
 ) -> Result<()> {
     let workspace_path_buf = workspace_path
         .canonicalize()
         .with_context(|| format!("Failed to canonicalize workspace path {:?}", workspace_path))?;
     let workspace_path = &workspace_path_buf;
 
-    let worktrees = find_worktrees(workspace_path)?;
-
-    // Record initial mtimes in case we exit early (git status in no-op check might touch them)
-    let mut initial_mtimes = Vec::new();
-    for wt in &worktrees {
-        let index_path = wt.join(".git/index");
-        if index_path.exists() {
-            if let Ok(mtime) = get_file_mtime(&index_path) {
-                initial_mtimes.push((index_path, mtime));
-            }
-        }
-    }
-
-    // 1. Optimize no-op check: Compare HEAD of parent repo with HEAD of workspace root
-    // and check if all worktrees are clean.
-    let is_noop = if force {
-        false
-    } else {
-        (|| -> Result<bool> {
-            let parent_head = run_command("git", &["rev-parse", "HEAD"], &config.fuchsia_dir, &[])?;
-            let parent_head_sha = String::from_utf8_lossy(&parent_head.stdout)
-                .trim()
-                .to_string();
-
-            let workspace_head = run_command("git", &["rev-parse", "HEAD"], workspace_path, &[])?;
-            let workspace_head_sha = String::from_utf8_lossy(&workspace_head.stdout)
-                .trim()
-                .to_string();
-
-            if parent_head_sha != workspace_head_sha {
-                return Ok(false);
-            }
-
-            if !workspace_path.join(".jiri_root").exists() {
-                return Ok(false);
-            }
-
-            // Compare sub-project revisions
-            let parent_projects = get_jiri_projects(config, &config.fuchsia_dir)?;
-            let workspace_projects = get_jiri_projects(config, workspace_path)?;
-
-            let workspace_map: HashMap<String, JiriProject> = workspace_projects
-                .into_iter()
-                .map(|p| (p.name.clone(), p))
-                .collect();
-
-            if parent_projects.len() != workspace_map.len() {
-                return Ok(false);
-            }
-
-            for parent_project in parent_projects {
-                if let Some(workspace_project) = workspace_map.get(&parent_project.name) {
-                    if parent_project.revision != workspace_project.revision {
-                        return Ok(false);
-                    }
-                } else {
-                    return Ok(false);
-                }
-            }
-
-            // Check if all worktrees are clean
-            for wt in &worktrees {
-                let status = run_command("git", &["status", "--porcelain", "-uno"], wt, &[])?;
-                if !status.stdout.is_empty() {
-                    return Ok(false);
-                }
-            }
-
-            Ok(true)
-        })()
-        .unwrap_or(false)
-    };
-
-    if is_noop {
-        log::info!("Environment {} is already synced (no-op).", env_id);
-        // Restore mtimes because git status might have touched them
-        for (path, mtime) in initial_mtimes {
-            if let Err(e) = set_file_mtime(&path, mtime) {
-                log::warn!("Failed to restore index mtime for {:?}: {:?}", path, e);
-            }
-        }
-        return Ok(());
-    }
-
     if !quiet {
         eprintln!("Syncing environment {}...", env_id);
-    }
-
-    // Record index mtimes and HEADs before sync (for partial restoration)
-    let mut wt_states = Vec::new();
-    for wt in &worktrees {
-        let index_path = wt.join(".git/index");
-        if index_path.exists() {
-            let mtime = get_file_mtime(&index_path).ok();
-            let head = run_command("git", &["rev-parse", "HEAD"], wt, &[])
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .ok();
-            wt_states.push((wt.clone(), index_path, mtime, head));
-        }
     }
 
     // Copy/restore toolchain metadata (must be before sync for hooks)
@@ -139,106 +36,6 @@ pub fn sync_environment(
 
     run_command(jiri_cmd, &["worktree", "sync"], workspace_path, &[])
         .context("Failed to run jiri worktree sync")?;
-
-    // Align with parent's local state
-    align_worktree_with_parent(config, workspace_path)?;
-
-    // Restore index mtimes for unchanged and clean worktrees
-    for (wt, index_path, mtime_opt, old_head_opt) in wt_states {
-        if let (Some(mtime), Some(old_head)) = (mtime_opt, old_head_opt) {
-            let new_head = run_command("git", &["rev-parse", "HEAD"], &wt, &[])
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .unwrap_or_default();
-            if new_head == old_head {
-                let status = run_command("git", &["status", "--porcelain", "-uno"], &wt, &[])?;
-                if status.stdout.is_empty() {
-                    if let Err(e) = set_file_mtime(&index_path, mtime) {
-                        log::warn!(
-                            "Failed to restore index mtime for {:?}: {:?}",
-                            index_path,
-                            e
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Deserialize, Debug)]
-struct JiriProject {
-    name: String,
-    path: String,
-    revision: String,
-}
-
-fn get_jiri_projects(config: &Config, dir: &Path) -> Result<Vec<JiriProject>> {
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path().to_str().unwrap();
-
-    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
-    let jiri_cmd = if jiri_bin.exists() {
-        jiri_bin.to_str().unwrap()
-    } else {
-        "jiri"
-    };
-
-    run_command(jiri_cmd, &["project", "-json-output", temp_path], dir, &[])
-        .context(format!("Failed to run jiri project in {:?}", dir))?;
-
-    let file = File::open(temp_path)?;
-    let projects: Vec<JiriProject> =
-        serde_json::from_reader(file).context("Failed to parse jiri project JSON")?;
-    Ok(projects)
-}
-
-fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<()> {
-    let projects = get_jiri_projects(config, &config.fuchsia_dir)?;
-
-    for project in projects {
-        let parent_project_path = Path::new(&project.path);
-        let rel_path = match parent_project_path.strip_prefix(&config.fuchsia_dir) {
-            Ok(p) => p,
-            Err(_) => {
-                log::warn!(
-                    "Project path {:?} is not under fuchsia_dir {:?}",
-                    parent_project_path,
-                    config.fuchsia_dir
-                );
-                continue;
-            }
-        };
-
-        let workspace_project_path = workspace_path.join(rel_path);
-
-        if workspace_project_path.exists() {
-            log::info!(
-                "Aligning project {} to revision {} in {:?}",
-                project.name,
-                project.revision,
-                workspace_project_path
-            );
-            run_command(
-                "git",
-                &["checkout", &project.revision],
-                &workspace_project_path,
-                &[],
-            )
-            .with_context(|| {
-                format!(
-                    "Failed to checkout revision {} in {:?}",
-                    project.revision, workspace_project_path
-                )
-            })?;
-        } else {
-            log::warn!(
-                "Workspace project path {:?} does not exist",
-                workspace_project_path
-            );
-        }
-    }
 
     Ok(())
 }

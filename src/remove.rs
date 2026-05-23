@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::utils::run_command;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
 
 pub fn remove_environment(config: &Config, id: &str, force: bool, quiet: bool) -> Result<()> {

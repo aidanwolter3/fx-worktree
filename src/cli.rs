@@ -65,9 +65,6 @@ pub enum Commands {
     Sync {
         /// Worktree ID to sync
         id: String,
-        /// Force sync even if HEAD has not changed
-        #[arg(long, short)]
-        force: bool,
     },
     /// Release and reset a worktree (does a git reset)
     Release {

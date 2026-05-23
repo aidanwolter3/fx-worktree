@@ -1,6 +1,5 @@
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

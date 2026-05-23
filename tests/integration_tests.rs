@@ -189,9 +189,18 @@ elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
     fi
   fi
 elif [ "$1" = "worktree" ] && [ "$2" = "sync" ]; then
-  # Simulated buggy jiri: do not checkout parent revisions
-
-  
+  parent_rev=$(git -C "$base_dir" rev-parse HEAD)
+  current_rev=$(git rev-parse HEAD)
+  if [ "$current_rev" != "$parent_rev" ]; then
+    git checkout -q "$parent_rev"
+  fi
+  if [ -d "third_party/sub" ]; then
+    parent_sub_rev=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
+    current_sub_rev=$(git -C "third_party/sub" rev-parse HEAD)
+    if [ "$current_sub_rev" != "$parent_sub_rev" ]; then
+      git -C "third_party/sub" checkout -q "$parent_sub_rev"
+    fi
+  fi
   ensure_file=$(mktemp)
   cat <<EOF > "$ensure_file"
 @Subdir prebuilt/tools/mock_tool
@@ -222,11 +231,13 @@ EOF
   
 
 
-  if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
-    ./tools/build/scripts/extract_pydantic_core_wheel.sh
-  fi
-  if [ -f "tools/build/scripts/extract_protobuf_py3_wheel.sh" ]; then
-    ./tools/build/scripts/extract_protobuf_py3_wheel.sh
+  if [ "$current_rev" != "$parent_rev" ] || [ ! -d "prebuilt/third_party/pydantic-core" ] || [ ! -d "prebuilt/third_party/protobuf-py3" ]; then
+    if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
+      ./tools/build/scripts/extract_pydantic_core_wheel.sh
+    fi
+    if [ -f "tools/build/scripts/extract_protobuf_py3_wheel.sh" ]; then
+      ./tools/build/scripts/extract_protobuf_py3_wheel.sh
+    fi
   fi
 elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
   git clean -fdx \
@@ -1113,8 +1124,7 @@ fn test_nosync_and_sync() {
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello");
 
     // 4. Run sync
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false)
-        .unwrap();
+    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true).unwrap();
 
     // Verify that workspace dummy.txt is now "hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
@@ -1152,8 +1162,7 @@ fn test_sync_on_subproject_change() {
 
     // 4. Run sync (without force)
     // This should NOT be a no-op because the sub-project revision changed.
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true, false)
-        .unwrap();
+    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true).unwrap();
 
     // Verify that workspace sub-project is now "sub hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello v2");

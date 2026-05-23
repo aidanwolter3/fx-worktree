@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -21,7 +21,6 @@ pub fn run_self_test(config: &Config, env_id: String) -> Result<()> {
         .unwrap()
         .join(format!("self-test-{}", &rand_id[0..8]));
     fs::create_dir_all(&selftest_root)?;
-
 
     let test_config = Config {
         fx_worktree_root: selftest_root.clone(),
@@ -82,8 +81,9 @@ fn run_self_test_lifecycle(test_config: &Config, env_id_or_path: String) -> Resu
         }
         let temp_env_dir = test_config.environments_dir().join(&env_id_or_path);
         if env_path != temp_env_dir {
-            std::os::unix::fs::symlink(&env_path, &temp_env_dir)
-                .with_context(|| format!("Failed to symlink {:?} to {:?}", env_path, temp_env_dir))?;
+            std::os::unix::fs::symlink(&env_path, &temp_env_dir).with_context(|| {
+                format!("Failed to symlink {:?} to {:?}", env_path, temp_env_dir)
+            })?;
         }
         env_id_or_path
     };

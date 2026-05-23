@@ -129,10 +129,10 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Commands::Sync { id, force } => {
+        Commands::Sync { id } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            sync::sync_environment_by_id(&config, &id, cli.json, force)?;
+            sync::sync_environment_by_id(&config, &id, cli.json)?;
             if cli.json {
                 println!("{{\"synced\":true,\"environment_id\":\"{}\"}}", id);
             } else {
