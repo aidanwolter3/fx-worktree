@@ -83,7 +83,9 @@ pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) ->
         }
     }
 
-    // 1. Clean the workspace by calling 'jiri worktree clean'
+    // 1. Clean the workspace by calling 'jiri worktree clean'.
+    // Note: This relies on 'jiri' being optimized to clean repositories in parallel
+    // to meet performance requirements (less than 5 seconds).
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
     let jiri_cmd = if jiri_bin.exists() {
         jiri_bin.to_str().unwrap()
