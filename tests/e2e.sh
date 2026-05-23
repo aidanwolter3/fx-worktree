@@ -110,6 +110,10 @@ mkdir -p "$MANIFEST_REPO"
 cd "$MANIFEST_REPO"
 git init -q
 
+# Create build/cipd.gni
+mkdir -p build
+echo "# CIPD settings" > build/cipd.gni
+
 # Create minimal.xml dynamically to include absolute paths of temp repos
 cat << EOF > minimal.xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -154,12 +158,14 @@ toolchain("dummy") {
 EOF
 
 cat << 'EOF' > BUILD.gn
+import("//build/cipd.gni")
 group("all") {
   deps = [
     "//source_repo1:sim_link",
   ]
 }
 EOF
+
 
 # Mock fx script
 mkdir -p scripts
@@ -182,7 +188,7 @@ if [ "\$cmd" = "set" ]; then
   config_name="\${@: -1}"
   echo "build_info_product = \\"\$config_name\\"" > "\$dir/args.gn"
   "$GN_BIN" gen "\$dir"
-elif [ "\$cmd" = "build" ]; then
+elif [ "\$cmd" = "build" ] || [ "\$cmd" = "ninja" ]; then
   "$NINJA_BIN" -C "\$dir" "\$@"
 elif [ "\$cmd" = "get-build-dir" ]; then
   echo "\$dir"
@@ -267,14 +273,14 @@ echo "Scenario 1 PASSED."
 # ==============================================================================
 # Scenario 2: lease, build, release, lease, build => is no-op
 # ==============================================================================
-echo -e "\n--- Running Scenario 2: lease, build, release, lease, build => is no-op ---"
+echo -e "\n$(date +"[%T.%3N]") --- Running Scenario 2: lease, build, release, lease, build => is no-op ---"
 
 # Currently leased. We need to release it.
-echo "Releasing worktree $WT_ID..."
+echo "$(date +"[%T.%3N]") Releasing worktree $WT_ID..."
 $FX_WORKTREE_BIN release "$WT_ID"
 
 # Lease it again
-echo "Leasing worktree again..."
+echo "$(date +"[%T.%3N]") Leasing worktree again..."
 WT_PATH2=$($FX_WORKTREE_BIN lease mock_config --print-path-only)
 if [ "$WT_PATH" != "$WT_PATH2" ]; then
     echo -e "${RED}FAIL: Leased a different worktree: $WT_PATH2 (expected $WT_PATH)${NC}"
@@ -284,7 +290,7 @@ fi
 cd "$WT_PATH2"
 
 # Verify no-op BEFORE building (this is where the ctime bug would trigger rebuild)
-echo "Verifying no-op after lease..."
+echo "$(date +"[%T.%3N]") Verifying no-op after lease..."
 explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" || true)
 if [ -n "$explain_output" ]; then
     echo -e "${RED}FAIL: Build is NOT a no-op after lease!${NC}"
@@ -294,7 +300,7 @@ if [ -n "$explain_output" ]; then
 fi
 
 # Build again (should be no-op)
-echo "Running build..."
+echo "$(date +"[%T.%3N]") Running build..."
 set +e
 build_output=$(scripts/fx build 2>&1)
 exit_code=$?
@@ -317,18 +323,18 @@ echo "Scenario 2 PASSED."
 # ==============================================================================
 # Scenario 3: lease, build, jiri update main tree, build (in worktree still) => is no-op
 # ==============================================================================
-echo -e "\n--- Running Scenario 3: lease, build, jiri update main tree, build => is no-op ---"
+echo -e "\n$(date +"[%T.%3N]") --- Running Scenario 3: lease, build, jiri update main tree, build => is no-op ---"
 
 # Currently leased (from Scenario 2).
 # We run a build to ensure we are clean (we just did, it was no-op).
 
 # Go to main tree and run jiri update
-echo "Running jiri update in main tree..."
+echo "$(date +"[%T.%3N]") Running jiri update in main tree..."
 cd "$TEST_ROOT"
 .jiri_root/bin/jiri update
 
 # Go back to worktree and build
-echo "Running build in worktree again..."
+echo "$(date +"[%T.%3N]") Running build in worktree again..."
 cd "$WT_PATH2"
 
 set +e
