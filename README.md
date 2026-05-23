@@ -56,41 +56,7 @@ created, a dedicated `outdir` is provisioned alongside it.
     determine that nothing has changed and complete in **less than 3
     seconds**.
 
-## Technical Rationale: Prebuilt Isolation and Shared Cache
 
-Fuchsia checkouts contain hundreds of prebuilt packages (toolchains, SDKs,
-firmware) managed by Jiri and CIPD. Sharing the parent's `prebuilt/` directory
-causes workspaces to dirty each other's builds when the parent updates.
-
-To isolate them while retaining cache sharing, `fx-worktree`:
-1.  **Queries Required Packages**: Queries the required packages for the
-    workspace's revision using `jiri package` locally.
-2.  **Groups by Target Path**: Groups packages by their target path. This is
-    critical because Jiri allows multiple packages to overlap in the same
-    destination (e.g., Rust host compiler and target libraries both install to
-    `prebuilt/third_party/rust/linux-x64`).
-3.  **Uses a Shared Cache**: Installs packages into a central cache at
-    `~/.fuchsia/worktrees/shared-prebuilts/merged/<target_path>/<hash>/`.
-    The hash is a SipHash of the sorted package names and versions in the
-    group, ensuring different workspaces on the same revision share the exact
-    same merged directories.
-4.  **Clamps modification times (mtimes)**: Some prebuilt packages contain
-    files with artificial modification times in the far future (e.g., Bazel
-    uses `2042-07-28` for determinism). Since Ninja tracks these as dynamic
-    inputs (recorded in `.ninja_deps`), they always trigger rebuilds because
-    today's build outputs are older than `2042`. To fix this, `fx-worktree`
-    recursively clamps the modification times of all files in newly downloaded
-    cache directories to a fixed past date (`2020-01-01 00:00:00 UTC`),
-    preserving build cache no-ops.
-5.  **Symlinks to Workspace**: Symlinks individual package target directories
-    in the workspace to their corresponding directory in the shared cache.
-6.  **Manually Extracts Wheels**: Some dependencies (like `pydantic-core` and
-    `protobuf-py3`) are distributed as CIPD wheel packages but extracted into
-    the source tree by Jiri hooks. Since we isolate `prebuilt/` and avoid
-    Jiri's slow `run-hooks` (which triggers network fetches), `fx-worktree`
-    manually runs the local wheel extraction scripts
-    (`extract_pydantic_core_wheel.sh` and `extract_protobuf_py3_wheel.sh`)
-    during allocation to extract them locally in the workspace.
 
 ---
 
@@ -101,83 +67,61 @@ operations to ensure environments are clean, isolated, and fast.
 
 ```mermaid
 graph TD
-    A["fx-worktree add"] -->|"1. git worktree add"| B("Worktree Created")
-    B -->|"2. Create outdir"| C("Outdir Created")
-    C -->|"3. Configure build"| D("Environment Ready")
+    A["fx-worktree add"] -->|"1. jiri worktree add"| B("Worktree Created")
+    B -->|"2. jiri worktree sync"| C("Worktree Synced")
+    C -->|"3. Configure build (fx set)"| D("Environment Ready")
 
-    D -->|"fx-worktree lease --sync"| E("Sync & Clean")
-    E -->|"1. git checkout branch"| F("Checkout")
-    F -->|"2. Sync with main checkout"| G("Sync")
-    G -->|"3. git clean -fdx"| H("Clean Source")
-    H -->|"4. Update prebuilts"| I("Prebuilts Isolated")
+    D -->|"fx-worktree lease --sync"| E("Syncing")
+    E -->|"jiri worktree sync"| F("Environment Leased")
 
-    I -->|"fx-worktree release"| J("Reset")
-    J -->|"1. git reset --hard"| K("Reset Source")
-    K -->|"2. git clean -fdx"| L("Source Cleaned")
-    L -->|"Keep outdir intact"| M("Environment Free")
+    F -->|"fx-worktree release"| G("Resetting")
+    G -->|"1. jiri worktree clean"| H("Source Cleaned")
+    H -->|"2. Restore args.gn"| I("Environment Free")
 
-    M -->|"fx-worktree remove"| N("Delete")
-    N -->|"1. git worktree remove"| O("Worktree Deleted")
-    O -->|"2. rm -rf outdir"| P("Outdir Deleted")
+    I -->|"fx-worktree remove"| J("Deleting")
+    J -->|"1. jiri worktree remove"| K("Worktree Deleted")
+    K -->|"2. rm -rf outdir"| L("Outdir Deleted")
 ```
 
 ### Detailed Lifecycle Steps
 
 #### 1. Creation (`fx-worktree add`)
 When you add a new environment, the tool:
-1.  **Creates a Git Worktree**: Runs `git worktree add` to create a new
+1.  **Creates a Git Worktree**: Runs `jiri worktree add` to create a new
     checkout linked to the main repository.
-2.  **Provisions an Outdir**: Creates a dedicated build output directory in
+2.  **Syncs the Worktree**: Runs `jiri worktree sync` to initialize the source tree.
+3.  **Provisions an Outdir**: Creates a dedicated build output directory in
     the Fuchsia build directory pool.
-3.  **Links and Configures**: Configures the build in the new `outdir` to
+4.  **Links and Configures**: Configures the build in the new `outdir` to
     point to the new worktree, performing the equivalent of `fx set` to
     establish the 1:1 pairing.
 
 #### 2. Leasing and Syncing (`fx-worktree lease --sync`)
-When an agent leases an environment with the `--sync` flag, the tool
-performs a carefully orchestrated sync to ensure the environment is updated
-while preserving build incrementalism:
+When an agent leases an environment:
 1.  **Locks the Environment**: Claims the environment to prevent concurrent
     access by other agents.
-2.  **Records Git Index mtimes**: Before running any Git operations, the
-    tool records the modification times (`mtimes`) of the Git index files.
-3.  **Fast No-Op Detection**: It checks if the workspace is already at the
-    target revision and clean. If it is, the tool skips Git updates entirely.
-4.  **Syncs Source**: If not a no-op, it syncs the worktree's Git state with
-    the main Fuchsia checkout to the target Jiri revisions, updating the root
-    project and all sub-projects in parallel.
-5.  **Cleans Stale Files**: Runs `git clean` (excluding the paired `outdir`
-    and special markers) to discard untracked files.
-6.  **Isolates and Clamps Prebuilts**: Resolves prebuilt packages via CIPD.
-    To prevent prebuilt updates from invalidating build caches, the tool:
-    *   Downloads missing packages to a shared cache.
-    *   **Clamps mtimes to the past**: Modifies the modification times of the
-        prebuilt files to a historical timestamp. This ensures Ninja treats
-        them as older than any build output.
-    *   Symlinks or copies them into the worktree.
-7.  **Restores Git Index mtimes**: If the sync was determined to be a no-op,
-    the tool restores the recorded Git index `mtimes`. This prevents Git from
-    thinking files have changed, which would otherwise trigger GN and Ninja to
-    rebuild.
+2.  **Syncs Source (Optional)**: If the `--sync` flag is provided, it runs
+    `jiri worktree sync` to update the worktree to the latest revisions of the
+    main checkout. Jiri handles the details of parallel synchronization and
+    prebuilt management.
 
 #### 3. Releasing (`fx-worktree release`)
 When work is complete and the environment is released:
-1.  **Resets Git State**: Runs `git reset --hard` and `git clean` to discard
-    any uncommitted local changes, returning the source tree to a pristine
-    state.
-2.  **Preserves Build Artifacts**: Critically, the paired `outdir` is **not**
+1.  **Cleans the Workspace**: Runs `jiri worktree clean` to discard uncommitted
+    changes and reset the source tree.
+2.  **Restores Build Configuration**: Restores the original `args.gn` from its
+    backup (`args.gn.ref`) if it was modified.
+3.  **Preserves Build Artifacts**: Critically, the paired `outdir` is **not**
     deleted. Build artifacts, Ninja logs, and compiler caches are preserved.
-3.  **Unlocks**: Marks the environment as "Free", making it available for
-    the next lease. The next agent leasing this environment will benefit from
-    the preserved build state, achieving near-instantaneous incremental
-    builds.
+4.  **Unlocks**: Marks the environment as "Free", making it available for
+    the next lease.
 
 #### 4. Deletion (`fx-worktree remove`)
 When an environment is no longer needed:
-1.  **Removes Git Worktree**: Runs `git worktree remove` to clean up the Git
+1.  **Removes Git Worktree**: Runs `jiri worktree remove` to clean up the Git
     metadata and delete the source files.
 2.  **Deletes Outdir**: Recursively deletes the paired `outdir`, freeing up
-    significant disk space.
+    disk space.
 
 ---
 
