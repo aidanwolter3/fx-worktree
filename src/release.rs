@@ -1,6 +1,9 @@
 use crate::config::Config;
 use crate::environment::EnvironmentInfo;
-use crate::utils::{copy_file_if_different, find_worktrees, get_file_mtime, run_command, set_file_mtime};
+use crate::utils::{
+    copy_file_if_different, find_worktrees, get_file_mtime, run_command, set_file_mtime,
+    MetadataMtimePreserver,
+};
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 
@@ -71,6 +74,9 @@ pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
 pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) -> Result<()> {
     log::info!("Releasing worktree {}", env_info.environment_id);
 
+    let mut metadata_preserver = MetadataMtimePreserver::new(&env_info.path);
+    metadata_preserver.record().context("Failed to record metadata mtimes")?;
+
     // Record index mtimes before clean
     let worktrees = find_worktrees(&env_info.path)?;
     let mut index_mtimes = Vec::new();
@@ -100,6 +106,8 @@ pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) ->
         &[],
     )
     .context("Failed to run jiri worktree clean")?;
+
+    metadata_preserver.restore().context("Failed to restore metadata mtimes")?;
 
     // Restore index mtimes after clean
     for (path, mtime) in index_mtimes {

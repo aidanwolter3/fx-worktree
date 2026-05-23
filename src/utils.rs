@@ -1,5 +1,6 @@
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -202,6 +203,89 @@ pub fn set_file_mtime(path: &Path, mtime: SystemTime) -> Result<()> {
     file.set_times(times)
         .with_context(|| format!("Failed to set times for {:?}", path))?;
     Ok(())
+}
+
+struct FileState {
+    mtime: SystemTime,
+    content: Vec<u8>,
+}
+
+pub struct MetadataMtimePreserver {
+    workspace_path: PathBuf,
+    recorded_states: HashMap<PathBuf, FileState>,
+}
+
+impl MetadataMtimePreserver {
+    pub fn new(workspace_path: &Path) -> Self {
+        Self {
+            workspace_path: workspace_path.to_path_buf(),
+            recorded_states: HashMap::new(),
+        }
+    }
+
+    pub fn record(&mut self) -> Result<()> {
+        let files_to_track = self.get_files_to_track()?;
+        for path in files_to_track {
+            if path.exists() && path.is_file() {
+                let mtime = get_file_mtime(&path)?;
+                let content = fs::read(&path)?;
+                self.recorded_states.insert(path, FileState { mtime, content });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn restore(&self) -> Result<()> {
+        for (path, state) in &self.recorded_states {
+            if path.exists() && path.is_file() {
+                let current_content = fs::read(path)?;
+                if current_content == state.content {
+                    log::info!("Restoring mtime for {:?}", path);
+                    if let Err(e) = set_file_mtime(path, state.mtime) {
+                        log::warn!("Failed to restore mtime for {:?}: {:?}", path, e);
+                    }
+                } else {
+                    log::info!("Content changed for {:?}, keeping new mtime", path);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn get_files_to_track(&self) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        let static_files = &[
+            "build/cipd.gni",
+            "sdk/ctf/build/internal/ctf_releases.gni",
+            ".jiri_manifest",
+        ];
+        for f in static_files {
+            let path = self.workspace_path.join(f);
+            if path.exists() {
+                files.push(path);
+            }
+        }
+
+        let dir = self.workspace_path.join("build/info/jiri_generated");
+        if dir.exists() && dir.is_dir() {
+            self.collect_files_recursive(&dir, &mut files)?;
+        }
+
+        Ok(files)
+    }
+
+    fn collect_files_recursive(&self, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                self.collect_files_recursive(&path, files)?;
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn get_config_name(workspace_path: &Path) -> Result<String> {

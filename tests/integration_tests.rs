@@ -64,6 +64,7 @@ fn setup_mock_env() -> TestEnv {
     fs::write(build_info_dir.join("commit_info"), "some info").unwrap();
 
     fs::write(fuchsia_path.join("build/cipd.gni"), "cipd = []").unwrap();
+    fs::write(fuchsia_path.join(".jiri_manifest"), "manifest").unwrap();
 
     // Create sub-project repo in fuchsia_dir
     let sub_path = fuchsia_path.join("third_party/sub");
@@ -212,6 +213,11 @@ EOF
   
   rm "$ensure_file"
   
+  touch sdk/ctf/build/internal/ctf_releases.gni
+  touch build/info/jiri_generated/commit_info
+  touch build/cipd.gni
+  touch .jiri_manifest
+
   if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
     ./tools/build/scripts/extract_pydantic_core_wheel.sh
   fi
@@ -231,6 +237,10 @@ elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
   if [ -d "third_party/sub" ]; then
     git -C "third_party/sub" clean -fdx
   fi
+  touch sdk/ctf/build/internal/ctf_releases.gni
+  touch build/info/jiri_generated/commit_info
+  touch build/cipd.gni
+  touch .jiri_manifest
 elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
   target_path=$3
   restore_git() {{
@@ -620,13 +630,15 @@ fn test_mtime_and_metadata_preservation() {
     let env_path = config.environments_dir().join(&env_id);
 
     // Verify metadata files were copied during create
-    assert!(env_path
-        .join("sdk/ctf/build/internal/ctf_releases.gni")
-        .exists());
-    assert!(env_path
-        .join("build/info/jiri_generated/commit_info")
-        .exists());
-    assert!(env_path.join("build/cipd.gni").exists());
+    let ctf_gni = env_path.join("sdk/ctf/build/internal/ctf_releases.gni");
+    let commit_info = env_path.join("build/info/jiri_generated/commit_info");
+    let cipd_gni = env_path.join("build/cipd.gni");
+    let jiri_manifest = env_path.join(".jiri_manifest");
+
+    assert!(ctf_gni.exists());
+    assert!(commit_info.exists());
+    assert!(cipd_gni.exists());
+    assert!(jiri_manifest.exists());
 
     // 2. Allocate
     let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
@@ -635,64 +647,106 @@ fn test_mtime_and_metadata_preservation() {
     let index_path = env_info.path.join(".git/index");
     assert!(index_path.exists());
 
-    // Record mtime of index and a source file
+    // Record mtime of index, dummy.txt and metadata files before free
     let index_mtime_before = fs::metadata(&index_path).unwrap().modified().unwrap();
-
-    // We need a tracked file to check. dummy.txt is tracked.
     let dummy_path = env_info.path.join("dummy.txt");
     let dummy_mtime_before = fs::metadata(&dummy_path).unwrap().modified().unwrap();
+
+    let ctf_mtime_before = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
+    let commit_info_mtime_before = fs::metadata(&commit_info).unwrap().modified().unwrap();
+    let cipd_mtime_before = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
+    let jiri_manifest_mtime_before = fs::metadata(&jiri_manifest).unwrap().modified().unwrap();
 
     // Sleep a bit to ensure time moves forward
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // 3. Free
+    // 3. Free (runs jiri clean, which we mocked to touch files)
     release_worktree(config, &env_info.environment_id).unwrap();
 
-    // Verify metadata files STILL exist (not deleted by clean)
-    assert!(env_path
-        .join("sdk/ctf/build/internal/ctf_releases.gni")
-        .exists());
-    assert!(env_path
-        .join("build/info/jiri_generated/commit_info")
-        .exists());
-    assert!(env_path.join("build/cipd.gni").exists());
+    // Verify metadata files STILL exist
+    assert!(ctf_gni.exists());
+    assert!(commit_info.exists());
+    assert!(cipd_gni.exists());
+    assert!(jiri_manifest.exists());
 
     // Verify index mtime is preserved
     let index_mtime_after_free = fs::metadata(&index_path).unwrap().modified().unwrap();
-    assert_eq!(
-        index_mtime_before, index_mtime_after_free,
-        "Index mtime should be preserved after free"
-    );
+    assert_eq!(index_mtime_before, index_mtime_after_free, "Index mtime should be preserved after free");
 
     // Verify dummy.txt mtime is preserved
     let dummy_mtime_after_free = fs::metadata(&dummy_path).unwrap().modified().unwrap();
-    assert_eq!(
-        dummy_mtime_before, dummy_mtime_after_free,
-        "dummy.txt mtime should be preserved after free"
-    );
+    assert_eq!(dummy_mtime_before, dummy_mtime_after_free, "dummy.txt mtime should be preserved after free");
+
+    // Verify metadata mtimes are preserved after free
+    let ctf_mtime_after_free = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
+    let commit_info_mtime_after_free = fs::metadata(&commit_info).unwrap().modified().unwrap();
+    let cipd_mtime_after_free = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
+    let jiri_manifest_mtime_after_free = fs::metadata(&jiri_manifest).unwrap().modified().unwrap();
+
+    assert_eq!(ctf_mtime_before, ctf_mtime_after_free, "ctf_releases.gni mtime should be preserved after free");
+    assert_eq!(commit_info_mtime_before, commit_info_mtime_after_free, "commit_info mtime should be preserved after free");
+    assert_eq!(cipd_mtime_before, cipd_mtime_after_free, "cipd.gni mtime should be preserved after free");
+    assert_eq!(jiri_manifest_mtime_before, jiri_manifest_mtime_after_free, "jiri_manifest mtime should be preserved after free");
+
+    // Record mtimes before sync
+    let ctf_mtime_before_sync = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
+    let commit_info_mtime_before_sync = fs::metadata(&commit_info).unwrap().modified().unwrap();
+    let cipd_mtime_before_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
+    let jiri_manifest_mtime_before_sync = fs::metadata(&jiri_manifest).unwrap().modified().unwrap();
 
     // Sleep again
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // 4. Allocate again (no-op case)
+    // 4. Allocate again (triggers sync, which we mocked to touch files)
     let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
 
-    // Verify index mtime is preserved after no-op allocate
+    // Verify index mtime is preserved
     let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
-    assert_eq!(
-        index_mtime_before, index_mtime_after_alloc,
-        "Index mtime should be preserved after no-op allocate"
-    );
+    assert_eq!(index_mtime_before, index_mtime_after_alloc, "Index mtime should be preserved after allocate");
 
     // Verify dummy.txt mtime is preserved
     let dummy_mtime_after_alloc = fs::metadata(&dummy_path).unwrap().modified().unwrap();
-    assert_eq!(
-        dummy_mtime_before, dummy_mtime_after_alloc,
-        "dummy.txt mtime should be preserved after no-op allocate"
-    );
+    assert_eq!(dummy_mtime_before, dummy_mtime_after_alloc, "dummy.txt mtime should be preserved after allocate");
+
+    // Verify metadata mtimes are preserved after sync
+    let ctf_mtime_after_sync = fs::metadata(&ctf_gni).unwrap().modified().unwrap();
+    let commit_info_mtime_after_sync = fs::metadata(&commit_info).unwrap().modified().unwrap();
+    let cipd_mtime_after_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
+    let jiri_manifest_mtime_after_sync = fs::metadata(&jiri_manifest).unwrap().modified().unwrap();
+
+    assert_eq!(ctf_mtime_before_sync, ctf_mtime_after_sync, "ctf_releases.gni mtime should be preserved after sync");
+    assert_eq!(commit_info_mtime_before_sync, commit_info_mtime_after_sync, "commit_info mtime should be preserved after sync");
+    assert_eq!(cipd_mtime_before_sync, cipd_mtime_after_sync, "cipd.gni mtime should be preserved after sync");
+    assert_eq!(jiri_manifest_mtime_before_sync, jiri_manifest_mtime_after_sync, "jiri_manifest mtime should be preserved after sync");
+
+    // 5. Test that mtime is NOT preserved if content changes
+    // Modify a file in parent
+    let parent_cipd = env.config.fuchsia_dir.join("build/cipd.gni");
+    fs::write(&parent_cipd, "cipd = [different]").unwrap();
+
+    // Make a dummy commit in parent to change HEAD and force sync
+    let dummy_parent_file = env.config.fuchsia_dir.join("dummy.txt");
+    fs::write(&dummy_parent_file, "force sync change").unwrap();
+    run_setup_cmd("git", &["add", "dummy.txt"], &env.config.fuchsia_dir);
+    run_setup_cmd("git", &["commit", "-m", "force sync"], &env.config.fuchsia_dir);
+
+    // Release env_info_2 first
+    release_worktree(config, &env_info_2.environment_id).unwrap();
+
+    // Record mtime before sync that changes content
+    let cipd_mtime_before_change_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
+
+    // Sleep
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Allocate again with sync, it should copy the new cipd.gni
+    let env_info_3 = lease_environment(config, "mock_config", "test_agent_3", true, true).unwrap();
+
+    let cipd_mtime_after_change_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
+    assert_ne!(cipd_mtime_before_change_sync, cipd_mtime_after_change_sync, "cipd.gni mtime should NOT be preserved if content changed");
 
     // Clean up
-    release_worktree(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_3.environment_id).unwrap();
     remove_environment(config, &env_id, false, false).unwrap();
 }
 

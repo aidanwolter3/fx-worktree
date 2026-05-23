@@ -1,5 +1,8 @@
 use crate::config::Config;
-use crate::utils::{copy_toolchain_metadata, find_worktrees, get_file_mtime, run_command, set_file_mtime};
+use crate::utils::{
+    copy_toolchain_metadata, find_worktrees, get_file_mtime, run_command, set_file_mtime,
+    MetadataMtimePreserver,
+};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::fs::File;
@@ -92,6 +95,9 @@ pub fn sync_environment(
         eprintln!("Syncing environment {}...", env_id);
     }
 
+    let mut metadata_preserver = MetadataMtimePreserver::new(workspace_path);
+    metadata_preserver.record().context("Failed to record metadata mtimes")?;
+
     // Record index mtimes and HEADs before sync (for partial restoration)
     let mut wt_states = Vec::new();
     for wt in &worktrees {
@@ -144,7 +150,7 @@ pub fn sync_environment(
         }
     }
 
-
+    metadata_preserver.restore().context("Failed to restore metadata mtimes")?;
 
     Ok(())
 }
