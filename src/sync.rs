@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::fs::File;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 pub fn sync_environment_by_id(config: &Config, id: &str, quiet: bool, force: bool) -> Result<()> {
     let path = crate::locate::locate_path(config, Some(id.to_string()))?;
@@ -62,7 +63,30 @@ pub fn sync_environment(
                 return Ok(false);
             }
 
-        // Check if all worktrees are clean
+            // Compare sub-project revisions
+            let parent_projects = get_jiri_projects(config, &config.fuchsia_dir)?;
+            let workspace_projects = get_jiri_projects(config, workspace_path)?;
+
+            let workspace_map: HashMap<String, JiriProject> = workspace_projects
+                .into_iter()
+                .map(|p| (p.name.clone(), p))
+                .collect();
+
+            if parent_projects.len() != workspace_map.len() {
+                return Ok(false);
+            }
+
+            for parent_project in parent_projects {
+                if let Some(workspace_project) = workspace_map.get(&parent_project.name) {
+                    if parent_project.revision != workspace_project.revision {
+                        return Ok(false);
+                    }
+                } else {
+                    return Ok(false);
+                }
+            }
+
+            // Check if all worktrees are clean
         for wt in &worktrees {
             let status = run_command(
                 "git",
@@ -162,7 +186,7 @@ struct JiriProject {
     revision: String,
 }
 
-fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<()> {
+fn get_jiri_projects(config: &Config, dir: &Path) -> Result<Vec<JiriProject>> {
     let temp_file = tempfile::NamedTempFile::new()?;
     let temp_path = temp_file.path().to_str().unwrap();
 
@@ -176,13 +200,18 @@ fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<
     run_command(
         jiri_cmd,
         &["project", "-json-output", temp_path],
-        &config.fuchsia_dir,
+        dir,
         &[],
-    ).context("Failed to run jiri project in parent")?;
+    ).context(format!("Failed to run jiri project in {:?}", dir))?;
 
     let file = File::open(temp_path)?;
     let projects: Vec<JiriProject> = serde_json::from_reader(file)
         .context("Failed to parse jiri project JSON")?;
+    Ok(projects)
+}
+
+fn align_worktree_with_parent(config: &Config, workspace_path: &Path) -> Result<()> {
+    let projects = get_jiri_projects(config, &config.fuchsia_dir)?;
 
     for project in projects {
         let parent_project_path = Path::new(&project.path);
