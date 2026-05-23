@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::environment::EnvironmentInfo;
 use crate::utils::{
-    copy_file_if_different, find_worktrees, get_file_mtime, run_command, set_file_mtime,
+    copy_file_if_different, run_command,
 };
 use anyhow::{Context, Result, anyhow};
 use std::fs;
@@ -73,17 +73,6 @@ pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
 pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) -> Result<()> {
     log::info!("Releasing worktree {}", env_info.environment_id);
 
-    // Record index mtimes before clean
-    let worktrees = find_worktrees(&env_info.path)?;
-    let mut index_mtimes = Vec::new();
-    for wt in &worktrees {
-        let index_path = wt.join(".git/index");
-        if index_path.exists() {
-            if let Ok(mtime) = get_file_mtime(&index_path) {
-                index_mtimes.push((index_path, mtime));
-            }
-        }
-    }
 
     // 1. Clean the workspace by calling 'jiri worktree clean'.
     // Note: This relies on 'jiri' being optimized to clean repositories in parallel
@@ -98,12 +87,6 @@ pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) ->
     run_command(jiri_cmd, &["worktree", "clean"], &env_info.path, &[])
         .context("Failed to run jiri worktree clean")?;
 
-    // Restore index mtimes after clean
-    for (path, mtime) in index_mtimes {
-        if let Err(e) = set_file_mtime(&path, mtime) {
-            log::warn!("Failed to restore index mtime for {:?}: {:?}", path, e);
-        }
-    }
 
     // 2. Restore args.gn in the build directory
     let out_dir = env_info.path.join("out/default");
