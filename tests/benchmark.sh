@@ -95,9 +95,6 @@ measure_time "fx-worktree lease (sync=true)" $FX_WORKTREE_BIN lease "$CONFIG" --
 echo -e "\n--- Running 'sync (no-op)' benchmark ---"
 measure_time "fx-worktree sync (no-op)" $FX_WORKTREE_BIN sync "$WT_ID"
 
-# 4. Benchmark 'sync --force' (forced)
-echo -e "\n--- Running 'sync --force' benchmark ---"
-measure_time "fx-worktree sync --force" $FX_WORKTREE_BIN sync "$WT_ID" --force
 
 # 5. Benchmark 'release'
 echo -e "\n--- Running 'release' benchmark ---"
