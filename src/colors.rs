@@ -14,8 +14,9 @@ impl Colors {
         let is_tty = unsafe { libc::isatty(libc::STDOUT_FILENO) } != 0;
         let no_color = env::var("NO_COLOR").is_ok();
         let term_dumb = env::var("TERM").map(|v| v == "dumb").unwrap_or(false);
+        let force_color = env::var("FORCE_COLOR").is_ok() || env::var("CLICOLOR_FORCE").is_ok();
         
-        let enabled = is_tty && !no_color && !term_dumb;
+        let enabled = (is_tty || force_color) && !no_color && !term_dumb;
         Colors { enabled }
     }
 
