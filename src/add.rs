@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::fs;
 
 pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Result<String> {
-    let env_path = provision_workspace(config, quiet)?;
+    let env_path = provision_workspace(config, config_name, quiet)?;
 
     // Implement cleanup helper in case creation fails in the middle
     let cleanup = || {
@@ -100,7 +100,11 @@ pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Resul
     Ok(env_id)
 }
 
-fn provision_workspace(config: &Config, quiet: bool) -> Result<std::path::PathBuf> {
+fn provision_workspace(
+    config: &Config,
+    config_name: &str,
+    quiet: bool,
+) -> Result<std::path::PathBuf> {
     if !quiet {
         eprintln!("Provisioning worktree workspace...");
     }
@@ -111,14 +115,28 @@ fn provision_workspace(config: &Config, quiet: bool) -> Result<std::path::PathBu
         "jiri"
     };
 
-    let output = run_command(jiri_cmd, &["worktree", "add"], &config.fuchsia_dir, &[])
-        .context("Failed to run jiri worktree add")?;
-
-    let stdout =
-        String::from_utf8(output.stdout).context("Failed to parse jiri output as UTF-8")?;
-    let path_str = stdout.trim();
-    if path_str.is_empty() {
-        return Err(anyhow::anyhow!("Jiri worktree add returned empty path"));
+    // Generate unique path with fuchsia.config-short_hash format
+    let mut wt_path = std::path::PathBuf::new();
+    for _ in 0..10 {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let short_hash = &uuid[0..8];
+        let id = format!("{}-{}", config_name, short_hash);
+        wt_path = config.environments_dir().join(&id);
+        if !wt_path.exists() {
+            break;
+        }
     }
-    Ok(std::path::PathBuf::from(path_str))
+    if wt_path.exists() {
+        return Err(anyhow::anyhow!("Failed to generate unique worktree path"));
+    }
+
+    let _ = run_command(
+        jiri_cmd,
+        &["worktree", "add", wt_path.to_str().unwrap()],
+        &config.fuchsia_dir,
+        &[],
+    )
+    .context("Failed to run jiri worktree add")?;
+
+    Ok(wt_path)
 }
