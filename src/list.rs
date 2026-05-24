@@ -4,6 +4,7 @@ use std::fs;
 
 use crate::config::Config;
 use crate::environment::EnvironmentInfo;
+use crate::colors::Colors;
 
 #[derive(serde::Serialize)]
 struct WorktreeListEntry {
@@ -15,6 +16,7 @@ struct WorktreeListEntry {
 }
 
 pub fn list_environments(config: &Config, json: bool) -> Result<()> {
+    let colors = Colors::new();
     let leases_dir = config.leases_dir();
     let envs_dir = config.environments_dir();
 
@@ -90,27 +92,19 @@ pub fn list_environments(config: &Config, json: bool) -> Result<()> {
         max_id = max_id.max(entry.worktree_id.len());
     }
 
-    println!(
-        "{:<cfg_width$}   {:<id_width$}   STATUS",
-        "CONFIG",
-        "WORKTREE ID",
-        cfg_width = max_config,
-        id_width = max_id
-    );
+    let header_cfg = colors.bold(&format!("{:<width$}", "CONFIG", width = max_config));
+    let header_id = colors.bold(&format!("{:<width$}", "WORKTREE ID", width = max_id));
+    let header_status = colors.bold("STATUS");
+    println!("{}   {}   {}", header_cfg, header_id, header_status);
 
     for entry in &env_entries {
         let status_str = match &entry.agent_id {
-            Some(agent) => format!("In Use ({})", agent),
-            None => "Free".to_string(),
+            Some(agent) => colors.yellow(&format!("In Use ({})", agent)),
+            None => colors.green("Free"),
         };
-        println!(
-            "{:<cfg_width$}   {:<id_width$}   {}",
-            entry.config,
-            entry.worktree_id,
-            status_str,
-            cfg_width = max_config,
-            id_width = max_id
-        );
+        let cfg_str = colors.blue(&format!("{:<width$}", entry.config, width = max_config));
+        let id_str = colors.blue(&format!("{:<width$}", entry.worktree_id, width = max_id));
+        println!("{}   {}   {}", cfg_str, id_str, status_str);
     }
 
     Ok(())

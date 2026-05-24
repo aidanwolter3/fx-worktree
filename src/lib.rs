@@ -12,3 +12,4 @@ pub mod remove;
 pub mod selftest;
 pub mod sync;
 pub mod utils;
+pub mod colors;

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use fx_worktree::cli::{Cli, Commands};
 use fx_worktree::config::Config;
+use fx_worktree::colors::Colors;
 use fx_worktree::{add, lease, list, locate, release, remove, selftest, sync};
 
 fn main() -> Result<()> {
@@ -9,6 +10,7 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let cli = Cli::parse();
+    let colors = Colors::new();
 
     if cli.helpfull {
         let mut cmd = Cli::command();
@@ -58,8 +60,10 @@ fn main() -> Result<()> {
                 );
             } else {
                 println!(
-                    "✔ Worktree {} successfully added for config {}.",
-                    env_id, cfg
+                    "{} Worktree {} successfully added for config {}.",
+                    colors.green("✔"),
+                    colors.blue(&env_id),
+                    colors.blue(&cfg)
                 );
             }
         }
@@ -81,7 +85,11 @@ fn main() -> Result<()> {
             if cli.json {
                 println!("{{\"removed\":true,\"environment_id\":\"{}\"}}", id);
             } else {
-                println!("✔ Worktree {} successfully removed.", id);
+                println!(
+                    "{} Worktree {} successfully removed.",
+                    colors.green("✔"),
+                    colors.blue(&id)
+                );
             }
         }
         Commands::List => {
@@ -114,15 +122,15 @@ fn main() -> Result<()> {
             } else if print_path_only {
                 println!("{}", env_info.path.to_string_lossy());
             } else {
-                println!("✔ Worktree leased successfully!\n");
-                println!("  Worktree ID  : {}", env_info.environment_id);
-                println!("  Agent ID     : {}", env_info.agent_id);
-                println!("  Config       : {}", env_info.config);
-                println!("  Path         : {}", env_info.path.to_string_lossy());
+                println!("{} Worktree leased successfully!\n", colors.green("✔"));
+                println!("  Worktree ID  : {}", colors.blue(&env_info.environment_id));
+                println!("  Agent ID     : {}", colors.blue(&env_info.agent_id));
+                println!("  Config       : {}", colors.blue(&env_info.config));
+                println!("  Path         : {}", colors.blue(&env_info.path.to_string_lossy()));
                 println!("\nTo change directory into the worktree:");
                 println!(
                     "  $ fx-worktree cd {}  # Navigate to this specific worktree",
-                    env_info.environment_id
+                    colors.blue(&env_info.environment_id)
                 );
                 println!(
                     "  $ fx-worktree cd                     # Navigate to the last leased worktree"
@@ -136,14 +144,18 @@ fn main() -> Result<()> {
             if cli.json {
                 println!("{{\"synced\":true,\"environment_id\":\"{}\"}}", id);
             } else {
-                println!("✔ Environment {} successfully synced.", id);
+                println!(
+                    "{} Environment {} successfully synced.",
+                    colors.green("✔"),
+                    colors.blue(&id)
+                );
             }
         }
         Commands::Release { id } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
             if !cli.json {
-                eprintln!("Resetting worktree {}...", id);
+                eprintln!("Resetting worktree {}...", colors.blue(&id));
             }
             let released_id = release::release_worktree(&config, &id)?;
             if cli.json {
@@ -152,7 +164,11 @@ fn main() -> Result<()> {
                     released_id
                 );
             } else {
-                println!("✔ Worktree {} successfully released.", released_id);
+                println!(
+                    "{} Worktree {} successfully released.",
+                    colors.green("✔"),
+                    colors.blue(&released_id)
+                );
             }
         }
         Commands::Cd { .. } => {
