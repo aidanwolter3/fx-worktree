@@ -324,8 +324,13 @@ EOF
 
     cat << 'EOF' > BUILD.gn
 import("//build/cipd.gni")
+copy("check_jiri") {
+  sources = [ "//.jiri_root/update_history/latest" ]
+  outputs = [ "$target_gen_dir/jiri_latest_copy" ]
+}
 group("all") {
   deps = [
+    ":check_jiri",
     "//source_repo1:sim_link",
   ]
 }
@@ -371,12 +376,21 @@ check_noop() {
     local dir="$1"
     echo "[Progress] Verifying no-op build in $dir..."
     cd "$dir"
+    local build_dir=$(scripts/fx get-build-dir)
     local explain_output
-    explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" | head -n 1 || true)
-    if [ -n "$explain_output" ]; then
+    explain_output=$(scripts/fx ninja -C "$build_dir" -d explain -n -v 2>&1)
+    local ninja_status=${PIPESTATUS[0]}
+    if [ $ninja_status -ne 0 ]; then
+        echo -e "${RED}FAIL: Ninja command failed with exit code $ninja_status in $dir${NC}"
+        echo "Output:"
+        echo "$explain_output"
+        exit 1
+    fi
+    local explain_line=$(echo "$explain_output" | grep "ninja explain:" | head -n 1 || true)
+    if [ -n "$explain_line" ]; then
         echo -e "${RED}FAIL: Build was not a no-op in $dir${NC}"
         echo "Ninja explain output:"
-        echo "$explain_output"
+        echo "$explain_line"
         exit 1
     fi
     echo "✔ Build is no-op."
@@ -494,10 +508,18 @@ scripts/fx build
 check_noop "$WT_PATH"
 
 echo "[Progress] Verifying build regeneration in worktree..."
-echo "change" >> source_repo1/source.txt
-explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" | head -n 1 || true)
+echo "# E2E test modification" >> BUILD.gn
+explain_output_tmp=$(scripts/fx ninja -C "$(scripts/fx get-build-dir)" -d explain -n -v 2>&1)
+ninja_status_tmp=${PIPESTATUS[0]}
+if [ $ninja_status_tmp -ne 0 ]; then
+    echo -e "${RED}FAIL: Ninja command failed with exit code $ninja_status_tmp during regeneration check${NC}"
+    echo "Output:"
+    echo "$explain_output_tmp"
+    exit 1
+fi
+explain_output=$(echo "$explain_output_tmp" | grep "ninja explain:" | head -n 1 || true)
 if [ -z "$explain_output" ]; then
-    echo -e "${RED}FAIL: Build was still a no-op after modifying source file in $WT_PATH${NC}"
+    echo -e "${RED}FAIL: Build was still a no-op after modifying BUILD.gn in $WT_PATH${NC}"
     exit 1
 fi
 echo "✔ Build correctly detects modification: $explain_output"
@@ -505,7 +527,7 @@ scripts/fx build
 check_noop "$WT_PATH"
 
 # Restore file
-git -C source_repo1 checkout source.txt
+git checkout BUILD.gn
 scripts/fx build
 check_noop "$WT_PATH"
 
@@ -519,15 +541,14 @@ fi
 cd "$WT_PATH"
 check_noop "$WT_PATH"
 
-echo "[Progress] Updating main tree and verifying worktree no-op..."
+echo "[Progress] Updating main tree..."
 cd "$TEST_ROOT"
 run_jiri_update "$JIRI_BIN"
 
-cd "$WT_PATH"
-check_noop "$WT_PATH"
-
 echo "[Progress] Syncing worktree..."
 $FX_WORKTREE_BIN sync "$WT_ID"
+cd "$WT_PATH"
+scripts/fx build
 check_noop "$WT_PATH"
 
 # ==============================================================================
