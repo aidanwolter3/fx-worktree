@@ -231,6 +231,7 @@ EOF
 
     cat << 'EOF' > link_tool.py
 import os
+import shutil
 import sys
 
 src = sys.argv[1]
@@ -240,7 +241,7 @@ if os.path.exists(dst):
     os.remove(dst)
 
 os.makedirs(os.path.dirname(dst), exist_ok=True)
-os.link(src, dst)
+shutil.copy(src, dst)
 EOF
     chmod +x link_tool.py
 
@@ -337,8 +338,8 @@ group("all") {
 EOF
 
     # Mock fx script
-    GN_BIN="/usr/local/google/home/awolter/fuchsia/prebuilt/third_party/gn/linux-x64/gn"
-    NINJA_BIN="/usr/bin/ninja"
+    GN_BIN="${GN_BIN:-/usr/local/google/home/awolter/fuchsia/prebuilt/third_party/gn/linux-x64/gn}"
+    NINJA_BIN="${NINJA_BIN:-/usr/bin/ninja}"
     mkdir -p scripts
     cat << EOF > scripts/fx
 #!/bin/bash
@@ -400,43 +401,85 @@ check_noop() {
 # 2. Setup Old Jiri
 # ==============================================================================
 if [ "$REAL_MODE" = "false" ]; then
-    echo "[Progress] Bootstrapping official (old) Jiri..."
-    mkdir -p "$TEST_ROOT"
-    cd "$TEST_ROOT"
-    curl -s "https://fuchsia.googlesource.com/jiri/+/HEAD/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s .
-    OLD_JIRI="$TEST_ROOT/.jiri_root/bin/jiri"
+    if [ -n "$SKIP_OLD_JIRI" ]; then
+        echo "[Progress] Skipping old Jiri bootstrap (SKIP_OLD_JIRI set), using new Jiri for setup..."
+        mkdir -p "$TEST_ROOT"
+        cd "$TEST_ROOT"
+        mkdir -p .jiri_root/bin
+        if [ -n "$NEW_JIRI_BIN" ]; then
+            cp "$NEW_JIRI_BIN" .jiri_root/bin/jiri
+        else
+            NEW_JIRI_SRC_EARLY="${NEW_JIRI_SRC:-/usr/local/google/home/awolter/src/jiri}"
+            (cd "$NEW_JIRI_SRC_EARLY" && go build -o "$TEST_ROOT/.jiri_root/bin/jiri" ./cmd/jiri)
+        fi
+        OLD_JIRI="$TEST_ROOT/.jiri_root/bin/jiri"
 
-    echo "[Progress] Initializing Jiri root with old Jiri..."
-    "$OLD_JIRI" init -shared=true -enable-lockfile=false -analytics-opt=false .
-    "$OLD_JIRI" import minimal.xml "$MANIFEST_REPO"
-    run_jiri_update "$OLD_JIRI"
+        echo "[Progress] Initializing Jiri root with new Jiri..."
+        "$OLD_JIRI" init -shared=true -enable-lockfile=false -analytics-opt=false .
+        "$OLD_JIRI" import minimal.xml "$MANIFEST_REPO"
+        run_jiri_update "$OLD_JIRI"
 
-    # Initial build with old Jiri
-    echo "[Progress] Running initial build with old Jiri..."
-    scripts/fx set "$CONFIG_NAME"
-    scripts/fx build
-else
-    echo "[Progress] Restoring official (old) Jiri to real repo..."
-    cd "$TEST_ROOT"
-    # Download and overwrite with official Jiri
-    curl -s "https://fuchsia.googlesource.com/jiri/+/HEAD/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s .
-    # Make sure cache is disabled initially
-    if [ -f .jiri_root/config ]; then
-        sed -i 's/<enabled>true<\/enabled>/<enabled>false<\/enabled>/g' .jiri_root/config
+        # Initial build
+        echo "[Progress] Running initial build..."
+        scripts/fx set "$CONFIG_NAME"
+        scripts/fx build
+    else
+        echo "[Progress] Bootstrapping official (old) Jiri..."
+        mkdir -p "$TEST_ROOT"
+        cd "$TEST_ROOT"
+        curl -s "https://fuchsia.googlesource.com/jiri/+/HEAD/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s .
+        OLD_JIRI="$TEST_ROOT/.jiri_root/bin/jiri"
+
+        echo "[Progress] Initializing Jiri root with old Jiri..."
+        "$OLD_JIRI" init -shared=true -enable-lockfile=false -analytics-opt=false .
+        "$OLD_JIRI" import minimal.xml "$MANIFEST_REPO"
+        run_jiri_update "$OLD_JIRI"
+
+        # Initial build with old Jiri
+        echo "[Progress] Running initial build with old Jiri..."
+        scripts/fx set "$CONFIG_NAME"
+        scripts/fx build
     fi
-    run_jiri_update ./.jiri_root/bin/jiri
-    
-    echo "[Progress] Running initial build with old Jiri..."
-    scripts/fx set "$CONFIG_NAME"
-    scripts/fx build
+else
+    cd "$TEST_ROOT"
+    if [ -n "$SKIP_OLD_JIRI" ]; then
+        echo "[Progress] Skipping old Jiri bootstrap in real mode (SKIP_OLD_JIRI set)..."
+        # Make sure cache is disabled initially
+        if [ -f .jiri_root/config ]; then
+            sed -i 's/<enabled>true<\/enabled>/<enabled>false<\/enabled>/g' .jiri_root/config
+        fi
+        run_jiri_update ./.jiri_root/bin/jiri
+
+        echo "[Progress] Running initial build..."
+        scripts/fx set "$CONFIG_NAME"
+        scripts/fx build
+    else
+        echo "[Progress] Restoring official (old) Jiri to real repo..."
+        # Download and overwrite with official Jiri
+        curl -s "https://fuchsia.googlesource.com/jiri/+/HEAD/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s .
+        # Make sure cache is disabled initially
+        if [ -f .jiri_root/config ]; then
+            sed -i 's/<enabled>true<\/enabled>/<enabled>false<\/enabled>/g' .jiri_root/config
+        fi
+        run_jiri_update ./.jiri_root/bin/jiri
+
+        echo "[Progress] Running initial build with old Jiri..."
+        scripts/fx set "$CONFIG_NAME"
+        scripts/fx build
+    fi
 fi
 
 # ==============================================================================
 # 3. Inject New Jiri
 # ==============================================================================
 echo "[Progress] Compiling and injecting new Jiri..."
-NEW_JIRI_SRC="/usr/local/google/home/awolter/src/jiri"
-(cd "$NEW_JIRI_SRC" && go build -o "$TEST_DIR/new_jiri" ./cmd/jiri)
+NEW_JIRI_SRC="${NEW_JIRI_SRC:-/usr/local/google/home/awolter/src/jiri}"
+if [ -n "$NEW_JIRI_BIN" ]; then
+    echo "[Progress] Using prebuilt Jiri from $NEW_JIRI_BIN"
+    cp "$NEW_JIRI_BIN" "$TEST_DIR/new_jiri"
+else
+    (cd "$NEW_JIRI_SRC" && go build -o "$TEST_DIR/new_jiri" ./cmd/jiri)
+fi
 cp "$TEST_DIR/new_jiri" "$TEST_ROOT/.jiri_root/bin/jiri"
 JIRI_BIN="./.jiri_root/bin/jiri"
 
