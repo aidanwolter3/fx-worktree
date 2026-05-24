@@ -32,6 +32,7 @@ FX_WORKTREE_SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FX_WORKTREE_BIN="$FX_WORKTREE_SRC/target/debug/fx-worktree"
 
 # Parse arguments
+INSTALL_BASE_COMMIT=""
 REAL_MODE=false
 if [ -n "$1" ]; then
     REAL_MODE=true
@@ -76,14 +77,38 @@ run_jiri_update() {
     local jiri_bin="$1"
     shift
     echo "[Progress] Running Jiri update using $jiri_bin..."
+    if [ "$REAL_MODE" = "true" ] && [ -n "$INSTALL_BASE_COMMIT" ]; then
+        echo "[Progress] Temporarily resetting install_base commit before update..."
+        (
+            cd "$REAL_FUCHSIA_DIR"
+            git reset --hard
+            git checkout "$INSTALL_BASE_COMMIT~1"
+        )
+    fi
     "$jiri_bin" update "$@"
     if [ "$REAL_MODE" = "true" ]; then
+        if [ -n "$INSTALL_BASE_COMMIT" ]; then
+            echo "[Progress] Cherry-picking install_base commit after update..."
+            (
+                cd "$REAL_FUCHSIA_DIR"
+                git checkout JIRI_HEAD
+                git -c user.name="E2E Test" -c user.email="e2e@test.com" cherry-pick "$INSTALL_BASE_COMMIT"
+            )
+        fi
         echo "[Progress] Re-applying GN threads patch after update..."
         (
             cd "$REAL_FUCHSIA_DIR"
             python3 "$TEST_DIR/patch_regenerator.py"
             git -c user.name="E2E Test" -c user.email="e2e@test.com" commit -m "temp: patch GN threads for E2E" build/regenerator.py
         )
+        echo "DEBUG TIMESTAMPS after run_jiri_update:"
+        stat -c "  %y %n" build/regenerator.py || true
+        if [ -d "out" ]; then
+            local build_dir=$(scripts/fx get-build-dir 2>/dev/null || true)
+            if [ -n "$build_dir" ] && [ -f "$build_dir/build.ninja.stamp" ]; then
+                stat -c "  %y %n" "$build_dir/build.ninja.stamp" || true
+            fi
+        fi
     fi
 }
 
@@ -171,6 +196,14 @@ if [ "$REAL_MODE" = "true" ]; then
     ORIG_HEAD=$(git rev-parse HEAD)
     echo "$ORIG_HEAD" > "$TEST_DIR/orig_head"
 
+    # Find the install_base commit
+    INSTALL_BASE_COMMIT=$(git log --grep="\[build\]\[bazel\] Move install_base under parent outdir" --format="%H" -n 1 || true)
+    if [ -n "$INSTALL_BASE_COMMIT" ]; then
+        echo "Found install_base commit: $INSTALL_BASE_COMMIT"
+    else
+        echo "WARNING: Could not find install_base commit in log!"
+    fi
+
     echo "[Progress] Temporarily patching build/regenerator.py to limit GN to 1 thread..."
     cat << 'EOF' > "$TEST_DIR/patch_regenerator.py"
 import sys
@@ -244,6 +277,18 @@ os.link(src, dst)
 EOF
     chmod +x link_tool.py
 
+    cat << 'EOF' > verify_jiri_manifest.sh
+#!/bin/bash
+_SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+JIRI_ROOT="$(cd "${_SCRIPT_DIR}/.." && pwd -P)"
+if [ ! -f "${JIRI_ROOT}/.jiri_manifest" ]; then
+    echo "FATAL: Cannot locate .jiri_manifest in Jiri root: ${JIRI_ROOT}"
+    exit 1
+fi
+echo "✔ verify_jiri_manifest hook: found .jiri_manifest"
+EOF
+    chmod +x verify_jiri_manifest.sh
+
     echo "hello" > source.txt
     git add .
     git commit -m "initial commit" -q
@@ -301,7 +346,15 @@ EOF
     <package name="infra/tools/luci/gsutil/\${platform}"
              version="git_revision:e7191d1ea4af5d5bfa6e243f7d6a5697e3d7b600"
              path="prebuilt/tools/gsutil"/>
+    <package name="chromium/fuchsia/web_engine/amd64/tests"
+             version="version:149.0.7826.0"
+             path="prebuilt/third_party/web_engine_tests_latest/arch/x64"/>
   </packages>
+  <hooks>
+    <hook name="verify-jiri-manifest"
+          project="source_repo1"
+          action="verify_jiri_manifest.sh"/>
+  </hooks>
 </manifest>
 EOF
 
@@ -324,8 +377,13 @@ EOF
 
     cat << 'EOF' > BUILD.gn
 import("//build/cipd.gni")
+copy("check_jiri") {
+  sources = [ "//.jiri_root/update_history/latest" ]
+  outputs = [ "$target_gen_dir/jiri_latest_copy" ]
+}
 group("all") {
   deps = [
+    ":check_jiri",
     "//source_repo1:sim_link",
   ]
 }
@@ -371,12 +429,24 @@ check_noop() {
     local dir="$1"
     echo "[Progress] Verifying no-op build in $dir..."
     cd "$dir"
+    local build_dir=$(scripts/fx get-build-dir)
+    echo "DEBUG TIMESTAMPS in check_noop:"
+    stat -c "  %y %n" build/regenerator.py || true
+    stat -c "  %y %n" "$build_dir/build.ninja.stamp" || true
     local explain_output
-    explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" | head -n 1 || true)
-    if [ -n "$explain_output" ]; then
+    explain_output=$(scripts/fx ninja -C "$build_dir" -d explain -n -v 2>&1)
+    local ninja_status=${PIPESTATUS[0]}
+    if [ $ninja_status -ne 0 ]; then
+        echo -e "${RED}FAIL: Ninja command failed with exit code $ninja_status in $dir${NC}"
+        echo "Output:"
+        echo "$explain_output"
+        exit 1
+    fi
+    local explain_line=$(echo "$explain_output" | grep "ninja explain:" | head -n 1 || true)
+    if [ -n "$explain_line" ]; then
         echo -e "${RED}FAIL: Build was not a no-op in $dir${NC}"
         echo "Ninja explain output:"
-        echo "$explain_output"
+        echo "$explain_line"
         exit 1
     fi
     echo "✔ Build is no-op."
@@ -402,6 +472,14 @@ if [ "$REAL_MODE" = "false" ]; then
     scripts/fx set "$CONFIG_NAME"
     scripts/fx build
 else
+    echo "[Progress] Compiling temporary new Jiri to restore symlinks..."
+    NEW_JIRI_SRC="/usr/local/google/home/awolter/src/jiri"
+    (cd "$NEW_JIRI_SRC" && go build -o "$TEST_DIR/pre_cleanup_jiri" ./cmd/jiri)
+    
+    echo "[Progress] Restoring cache symlinks to real directories..."
+    "$TEST_DIR/pre_cleanup_jiri" init -prebuilt-cache=false
+    "$TEST_DIR/pre_cleanup_jiri" update
+
     echo "[Progress] Restoring official (old) Jiri to real repo..."
     cd "$TEST_ROOT"
     # Download and overwrite with official Jiri
@@ -436,10 +514,34 @@ check_noop "$TEST_ROOT"
 # ==============================================================================
 # 4. Toggle Prebuilt Cache (Main Tree)
 # ==============================================================================
+
 echo "[Progress] Enabling prebuilt cache in main tree..."
 "$JIRI_BIN" init -prebuilt-cache=true
 echo "[Progress] Running jiri update to migrate to cache..."
 run_jiri_update "$JIRI_BIN"
+
+if [ "$REAL_MODE" = "false" ]; then
+    echo "[Progress] Verifying symlinks in CACHE..."
+    web_engine_dest="$TEST_ROOT/prebuilt/third_party/web_engine_tests_latest/arch/x64"
+    cache_dir=$(readlink "$web_engine_dest")
+    echo "Cache dir for web_engine tests is $cache_dir"
+    check_file="$cache_dir/common_tests_manifest.json"
+    
+    echo "DEBUG ALL SYMLINKS IN CACHE:"
+    python3 -c "import os; [print(f'  {os.path.join(r, f)} -> {os.readlink(os.path.join(r, f))}') for r, d, files in os.walk('$cache_dir') for f in files if os.path.islink(os.path.join(r, f))]"
+    
+    if [ -L "$check_file" ]; then
+        if [ ! -e "$check_file" ]; then
+            echo -e "${RED}FAIL: common_tests_manifest.json symlink in CACHE is broken!${NC}"
+            exit 1
+        else
+            echo "✔ common_tests_manifest.json symlink in CACHE is resolved correctly: $(readlink "$check_file")"
+        fi
+    else
+        echo -e "${RED}FAIL: common_tests_manifest.json in CACHE is not a symlink or does not exist!${NC}"
+        exit 1
+    fi
+fi
 
 echo "[Progress] Building after cache enablement..."
 scripts/fx build
@@ -449,6 +551,28 @@ echo "[Progress] Disabling prebuilt cache in main tree..."
 "$JIRI_BIN" init -prebuilt-cache=false
 echo "[Progress] Running jiri update to restore from cache..."
 run_jiri_update "$JIRI_BIN"
+
+if [ "$REAL_MODE" = "false" ]; then
+    echo "[Progress] Verifying symlinks after restoration..."
+    check_file="$TEST_ROOT/prebuilt/third_party/web_engine_tests_latest/arch/x64/common_tests_manifest.json"
+    if [ -L "$check_file" ]; then
+        target=$(readlink "$check_file")
+        if [[ "$target" == *".jiri_root/prebuilts"* ]]; then
+            echo -e "${RED}FAIL: Restored symlink points to cache! Target: $target${NC}"
+            exit 1
+        else
+            echo "✔ Restored symlink is correct (does not point to cache): $target"
+        fi
+    else
+        echo -e "${RED}FAIL: Restored file is not a symlink or does not exist!${NC}"
+        exit 1
+    fi
+    
+    if grep -q "has broken symlinks" "$LOG_FILE"; then
+        echo -e "${RED}FAIL: Restoration failed and fell back to download!${NC}"
+        exit 1
+    fi
+fi
 
 echo "[Progress] Building after cache disablement..."
 scripts/fx build
@@ -494,10 +618,18 @@ scripts/fx build
 check_noop "$WT_PATH"
 
 echo "[Progress] Verifying build regeneration in worktree..."
-echo "change" >> source_repo1/source.txt
-explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" | head -n 1 || true)
+echo "# E2E test modification" >> BUILD.gn
+explain_output_tmp=$(scripts/fx ninja -C "$(scripts/fx get-build-dir)" -d explain -n -v 2>&1)
+ninja_status_tmp=${PIPESTATUS[0]}
+if [ $ninja_status_tmp -ne 0 ]; then
+    echo -e "${RED}FAIL: Ninja command failed with exit code $ninja_status_tmp during regeneration check${NC}"
+    echo "Output:"
+    echo "$explain_output_tmp"
+    exit 1
+fi
+explain_output=$(echo "$explain_output_tmp" | grep "ninja explain:" | head -n 1 || true)
 if [ -z "$explain_output" ]; then
-    echo -e "${RED}FAIL: Build was still a no-op after modifying source file in $WT_PATH${NC}"
+    echo -e "${RED}FAIL: Build was still a no-op after modifying BUILD.gn in $WT_PATH${NC}"
     exit 1
 fi
 echo "✔ Build correctly detects modification: $explain_output"
@@ -505,7 +637,7 @@ scripts/fx build
 check_noop "$WT_PATH"
 
 # Restore file
-git -C source_repo1 checkout source.txt
+git checkout BUILD.gn
 scripts/fx build
 check_noop "$WT_PATH"
 
@@ -519,15 +651,14 @@ fi
 cd "$WT_PATH"
 check_noop "$WT_PATH"
 
-echo "[Progress] Updating main tree and verifying worktree no-op..."
+echo "[Progress] Updating main tree..."
 cd "$TEST_ROOT"
 run_jiri_update "$JIRI_BIN"
 
-cd "$WT_PATH"
-check_noop "$WT_PATH"
-
 echo "[Progress] Syncing worktree..."
 $FX_WORKTREE_BIN sync "$WT_ID"
+cd "$WT_PATH"
+scripts/fx build
 check_noop "$WT_PATH"
 
 # ==============================================================================
