@@ -69,7 +69,11 @@ git init -q
 cat << 'EOF' > BUILD.gn
 action("sim_link") {
   script = "link_tool.py"
-  sources = [ "source.txt" ]
+  sources = [
+    "source.txt",
+    "//prebuilt/tools/gsutil/gsutil",
+    "//.git/index",
+  ]
   outputs = [ "$root_out_dir/gen/link.txt" ]
   args = [
     rebase_path("source.txt", root_build_dir),
@@ -109,6 +113,20 @@ git commit -m "initial commit" -q
 mkdir -p "$MANIFEST_REPO"
 cd "$MANIFEST_REPO"
 git init -q
+
+# Ignore build outputs so git status is clean
+cat << 'EOF' > .gitignore
+out/
+.fx-build-dir
+.fx-worktree-completed
+prebuilt/
+.jiri_root/
+.jiri_manifest
+.cipd/
+source_repo1/
+source_repo2/
+EOF
+
 
 # Create build/cipd.gni
 mkdir -p build
@@ -328,6 +346,13 @@ echo -e "\n$(date +"[%T.%3N]") --- Running Scenario 3: lease, build, jiri update
 # Currently leased (from Scenario 2).
 # We run a build to ensure we are clean (we just did, it was no-op).
 
+# Update manifest to use new version of gsutil
+echo "$(date +"[%T.%3N]") Updating manifest in manifest_repo..."
+cd "$MANIFEST_REPO"
+sed -i 's/version="git_revision:e7191d1ea4af5d5bfa6e243f7d6a5697e3d7b600"/version="XOvwwdfFrdBr5rVsNeK9-x5CUXrVT8xVE1xG63wuAdcC"/' minimal.xml
+git add minimal.xml
+git commit -m "update gsutil version" -q
+
 # Go to main tree and run jiri update
 echo "$(date +"[%T.%3N]") Running jiri update in main tree..."
 cd "$TEST_ROOT"
@@ -355,5 +380,48 @@ if ! echo "$build_output" | grep -q "no work to do"; then
     exit 1
 fi
 echo "Scenario 3 PASSED."
+
+# ==============================================================================
+# Scenario 4: build main tree, add worktree, build main tree => is no-op
+# ==============================================================================
+echo -e "\n$(date +"[%T.%3N]") --- Running Scenario 4: build main tree, add worktree, build main tree => is no-op ---"
+
+# Go to main tree and build to ensure it is clean
+cd "$TEST_ROOT"
+scripts/fx --dir out/default set mock_config
+scripts/fx build
+
+# Get mtimes of main tree .git/config and .git/index before add
+config_mtime_before=$(stat -c %Y .git/config)
+index_mtime_before=$(stat -c %Y .git/index)
+
+# Add a new worktree
+echo "$(date +"[%T.%3N]") Adding new worktree..."
+$FX_WORKTREE_BIN add mock_config2
+
+# Check if parent .git/config or .git/index mtime changed
+config_mtime_after=$(stat -c %Y .git/config)
+index_mtime_after=$(stat -c %Y .git/index)
+
+if [ "$config_mtime_before" != "$config_mtime_after" ]; then
+    echo -e "${RED}FAIL: Parent .git/config was modified during worktree add!${NC}"
+    exit 1
+fi
+
+if [ "$index_mtime_before" != "$index_mtime_after" ]; then
+    echo -e "${RED}FAIL: Parent .git/index was modified during worktree add!${NC}"
+    exit 1
+fi
+
+# Go to main tree and check if still clean
+echo "$(date +"[%T.%3N]") Verifying no-op in main tree..."
+explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" || true)
+if [ -n "$explain_output" ]; then
+    echo -e "${RED}FAIL: Main tree build is NOT a no-op after adding a worktree!${NC}"
+    echo "Ninja explanation:"
+    echo "$explain_output"
+    exit 1
+fi
+echo "Scenario 4 PASSED."
 
 echo -e "\n${GREEN}ALL SCENARIOS PASSED!${NC}"
