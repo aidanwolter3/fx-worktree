@@ -240,6 +240,25 @@ pub fn get_config_name(workspace_path: &Path) -> Result<String> {
         )),
     }
 }
+pub fn is_prebuilt_cache_enabled(fuchsia_dir: &Path) -> bool {
+    let config_path = fuchsia_dir.join(".jiri_root").join("config");
+    if !config_path.exists() {
+        return false;
+    }
+    let content = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    if let Some(start) = content.find("<prebuilt_cache>") {
+        if let Some(end) = content[start..].find("</prebuilt_cache>") {
+            let section = &content[start..start + end];
+            let normalized: String = section.chars().filter(|c| !c.is_whitespace()).collect();
+            return normalized.contains("<enabled>true</enabled>");
+        }
+    }
+    false
+}
 
 #[cfg(test)]
 mod tests {

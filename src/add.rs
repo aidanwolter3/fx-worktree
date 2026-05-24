@@ -4,6 +4,14 @@ use anyhow::{Context, Result};
 use std::fs;
 
 pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Result<String> {
+    if !quiet && !crate::utils::is_prebuilt_cache_enabled(&config.fuchsia_dir) {
+        eprintln!(
+            "⚠ Warning: Prebuilt cache is disabled in the parent repository.\n\
+             Worktree creation will be slow because it has to copy prebuilts.\n\
+             To enable fast worktree creation, run:\n\
+             $ jiri init -prebuilt-cache=true\n"
+        );
+    }
     let env_path = provision_workspace(config, config_name, quiet)?;
 
     // Implement cleanup helper in case creation fails in the middle
