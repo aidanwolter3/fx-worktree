@@ -1,8 +1,6 @@
 use crate::config::Config;
 use crate::environment::EnvironmentInfo;
-use crate::utils::{
-    copy_file_if_different, run_command,
-};
+use crate::utils::{copy_file_if_different, run_command};
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 
@@ -73,7 +71,6 @@ pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
 pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) -> Result<()> {
     log::info!("Releasing worktree {}", env_info.environment_id);
 
-
     // 1. Clean the workspace by calling 'jiri worktree clean'.
     // Note: This relies on 'jiri' being optimized to clean repositories in parallel
     // to meet performance requirements (less than 5 seconds).
@@ -86,7 +83,6 @@ pub fn release_worktree_internal(config: &Config, env_info: &EnvironmentInfo) ->
 
     run_command(jiri_cmd, &["worktree", "clean"], &env_info.path, &[])
         .context("Failed to run jiri worktree clean")?;
-
 
     // 2. Restore args.gn in the build directory
     let out_dir = env_info.path.join("out/default");

@@ -91,16 +91,19 @@ Change directory to a worktree (shell wrapper required).
 fx-worktree cd [worktree_id]
 ```
 
-### 8. Run Self-Test
-Runs a programmatic verification of the `fx-worktree` lifecycle (leasing,
-build regeneration, cache preservation, and cleanup) using an existing
-worktree.
+## Running Tests
+
+To verify `fx-worktree` functionality, you can run the comprehensive E2E test suite.
+
+Run the tests in **Mock Mode** (requires no real Fuchsia checkout, using mock repositories):
 ```bash
-fx-worktree self-test <worktree_id>
+./tests/e2e.sh
 ```
-> [!IMPORTANT]
-> The target worktree must be "Free" (not leased by any agent) and should
-> ideally be "warmed" (built at least once) to run the test quickly.
+
+Run the tests in **Real Mode** (against a real Fuchsia checkout, verifying real builds):
+```bash
+./tests/e2e.sh <path_to_fuchsia_dir> <config_name>
+```
 
 ## Worktree to Outdir 1:1 Pairing
 

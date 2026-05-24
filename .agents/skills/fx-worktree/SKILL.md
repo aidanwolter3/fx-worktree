@@ -19,7 +19,7 @@ Use `fx-worktree` when:
 *   You need to lease an isolated worktree to make changes and compile them.
 *   You want to run builds in parallel without conflicting with the main checkout or other agents.
 *   You want to reuse a shared pool of persistent worktrees to speed up compilation (preserving Ninja cache).
-*   You want to verify your fx-worktree setup via the `self-test` command.
+*   You want to verify your fx-worktree setup via the E2E test suite.
 
 ## CLI Commands
 
@@ -79,12 +79,12 @@ These commands manage the pool of persistent worktrees. The worktrees (including
     ```
     Prints the absolute path of the worktree directory.
 
-### 3. Verification & Maintenance
-*   **Run Automated Self-Test (Hidden Command)**:
+### 3. Verification & Testing
+*   **Run E2E Test Suite**:
     ```bash
-    fx-worktree self-test <worktree_id>
+    ./tests/e2e.sh
     ```
-    Runs a programmatic verification of the `fx-worktree` lifecycle (leasing, build regeneration, cache preservation, and cleanup) using an existing worktree.
+    Runs a comprehensive end-to-end test in Mock Mode (no Fuchsia checkout needed) to verify the `fx-worktree` tool's behavior (leasing, build regeneration, cache migration).
 
 *   **Generate Shell Completions (Hidden Command)**:
     ```bash

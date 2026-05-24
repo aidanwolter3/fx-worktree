@@ -493,6 +493,22 @@ echo "[Progress] Building in worktree..."
 scripts/fx build
 check_noop "$WT_PATH"
 
+echo "[Progress] Verifying build regeneration in worktree..."
+echo "change" >> source_repo1/source.txt
+explain_output=$(scripts/fx ninja -d explain -n -v 2>&1 | grep "ninja explain:" | head -n 1 || true)
+if [ -z "$explain_output" ]; then
+    echo -e "${RED}FAIL: Build was still a no-op after modifying source file in $WT_PATH${NC}"
+    exit 1
+fi
+echo "✔ Build correctly detects modification: $explain_output"
+scripts/fx build
+check_noop "$WT_PATH"
+
+# Restore file
+git -C source_repo1 checkout source.txt
+scripts/fx build
+check_noop "$WT_PATH"
+
 echo "[Progress] Testing release and re-lease..."
 $FX_WORKTREE_BIN release "$WT_ID"
 WT_PATH2=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --print-path-only)

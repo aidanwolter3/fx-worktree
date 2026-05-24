@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::fs;
 
+use crate::colors::Colors;
 use crate::config::Config;
 use crate::environment::EnvironmentInfo;
-use crate::colors::Colors;
 
 #[derive(serde::Serialize)]
 struct WorktreeListEntry {

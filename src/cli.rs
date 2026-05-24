@@ -82,12 +82,6 @@ pub enum Commands {
         /// Worktree ID
         id: Option<String>,
     },
-    /// Run a self-test to verify fx-worktree functionality using an existing worktree
-    #[command(hide = true)]
-    SelfTest {
-        /// Worktree ID to use for the test
-        id: String,
-    },
     /// Generate shell completion scripts to stdout
     #[command(hide = true)]
     Completions {

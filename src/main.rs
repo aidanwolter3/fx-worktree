@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use fx_worktree::cli::{Cli, Commands};
-use fx_worktree::config::Config;
 use fx_worktree::colors::Colors;
-use fx_worktree::{add, lease, list, locate, release, remove, selftest, sync};
+use fx_worktree::config::Config;
+use fx_worktree::{add, lease, list, locate, release, remove, sync};
 
 fn main() -> Result<()> {
     // Initialize logger (default to warn to silence info logs by default)
@@ -32,7 +32,6 @@ fn main() -> Result<()> {
             Commands::Release { .. } => "release",
             Commands::Cd { .. } => "cd",
             Commands::Locate { .. } => "locate",
-            Commands::SelfTest { .. } => "self-test",
             Commands::Completions { .. } => "completions",
         });
 
@@ -126,7 +125,10 @@ fn main() -> Result<()> {
                 println!("  Worktree ID  : {}", colors.blue(&env_info.environment_id));
                 println!("  Agent ID     : {}", colors.blue(&env_info.agent_id));
                 println!("  Config       : {}", colors.blue(&env_info.config));
-                println!("  Path         : {}", colors.blue(&env_info.path.to_string_lossy()));
+                println!(
+                    "  Path         : {}",
+                    colors.blue(&env_info.path.to_string_lossy())
+                );
                 println!("\nTo change directory into the worktree:");
                 println!(
                     "  $ fx-worktree cd {}  # Navigate to this specific worktree",
@@ -181,11 +183,6 @@ fn main() -> Result<()> {
             let path = locate::locate_path(&config, id)?;
             println!("{}", path.to_string_lossy());
         }
-        Commands::SelfTest { id } => {
-            let config = Config::new(cli.fuchsia_dir)?;
-            config.init_topology()?;
-            selftest::run_self_test(&config, id)?;
-        }
 
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
@@ -211,10 +208,6 @@ fn main() -> Result<()> {
                 script = script.replace(
                     "':id -- Worktree ID to sync:_default'",
                     "':id -- Worktree ID to sync:_fx_worktree_all_ids'",
-                );
-                script = script.replace(
-                    "':id -- Worktree ID to use for the test:_default'",
-                    "':id -- Worktree ID to use for the test:_fx_worktree_free_ids'",
                 );
 
                 // Patch positional config completions
