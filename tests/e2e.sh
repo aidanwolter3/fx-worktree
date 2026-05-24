@@ -71,6 +71,22 @@ else
     echo "Running in MOCK MODE"
 fi
 
+# Helper to run Jiri update and preserve GN patch in Real Mode
+run_jiri_update() {
+    local jiri_bin="$1"
+    shift
+    echo "[Progress] Running Jiri update using $jiri_bin..."
+    "$jiri_bin" update "$@"
+    if [ "$REAL_MODE" = "true" ]; then
+        echo "[Progress] Re-applying GN threads patch after update..."
+        (
+            cd "$REAL_FUCHSIA_DIR"
+            python3 "$TEST_DIR/patch_regenerator.py"
+            git -c user.name="E2E Test" -c user.email="e2e@test.com" commit -m "temp: patch GN threads for E2E" build/regenerator.py
+        )
+    fi
+}
+
 # Cleanup handler
 cleanup() {
     local exit_code=$?
@@ -91,12 +107,24 @@ cleanup() {
                 echo "Restoring original config to $REAL_FUCHSIA_DIR..."
                 cp "$TEST_DIR/backup_config" "$REAL_FUCHSIA_DIR/.jiri_root/config"
             fi
+            if [ -f "$TEST_DIR/orig_head" ]; then
+                ORIG_HEAD=$(cat "$TEST_DIR/orig_head")
+                echo "Resetting repository to $ORIG_HEAD..."
+                git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
+                git -C "$REAL_FUCHSIA_DIR" checkout build/regenerator.py
+            fi
         fi
         echo "Cleaning up $TEST_DIR..."
         rm -rf "$TEST_DIR"
     else
         echo -e "${RED}Uber E2E Test FAILED!${NC}"
         if [ "$REAL_MODE" = "true" ]; then
+            if [ -f "$TEST_DIR/orig_head" ]; then
+                ORIG_HEAD=$(cat "$TEST_DIR/orig_head")
+                echo "Resetting repository to $ORIG_HEAD..."
+                git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
+                git -C "$REAL_FUCHSIA_DIR" checkout build/regenerator.py
+            fi
             if [ -f "$TEST_DIR/backup_jiri" ]; then
                 echo "Restoring original Jiri to $REAL_FUCHSIA_DIR..."
                 rm -f "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
@@ -138,6 +166,31 @@ if [ "$REAL_MODE" = "true" ]; then
     if [ -f .jiri_root/config ]; then
         cp .jiri_root/config "$TEST_DIR/backup_config"
     fi
+
+    # Capture original HEAD
+    ORIG_HEAD=$(git rev-parse HEAD)
+    echo "$ORIG_HEAD" > "$TEST_DIR/orig_head"
+
+    echo "[Progress] Temporarily patching build/regenerator.py to limit GN to 1 thread..."
+    cat << 'EOF' > "$TEST_DIR/patch_regenerator.py"
+import sys
+with open('build/regenerator.py', 'r') as f:
+    content = f.read()
+target = '"--ninja-outputs-file=ninja_outputs.json",'
+replacement = '"--ninja-outputs-file=ninja_outputs.json",\n            "--threads=1",'
+if target in content:
+    content = content.replace(target, replacement)
+    with open('build/regenerator.py', 'w') as f:
+        f.write(content)
+    print('Patched build/regenerator.py successfully')
+else:
+    print('Failed to find target in build/regenerator.py')
+    sys.exit(1)
+EOF
+    python3 "$TEST_DIR/patch_regenerator.py"
+
+    # Commit it so it is checked out in worktrees
+    git -c user.name="E2E Test" -c user.email="e2e@test.com" commit -m "temp: patch GN threads for E2E" build/regenerator.py
 fi
 
 # Build fx-worktree
@@ -342,7 +395,7 @@ if [ "$REAL_MODE" = "false" ]; then
     echo "[Progress] Initializing Jiri root with old Jiri..."
     "$OLD_JIRI" init -shared=true -enable-lockfile=false -analytics-opt=false .
     "$OLD_JIRI" import minimal.xml "$MANIFEST_REPO"
-    "$OLD_JIRI" update
+    run_jiri_update "$OLD_JIRI"
 
     # Initial build with old Jiri
     echo "[Progress] Running initial build with old Jiri..."
@@ -357,7 +410,7 @@ else
     if [ -f .jiri_root/config ]; then
         sed -i 's/<enabled>true<\/enabled>/<enabled>false<\/enabled>/g' .jiri_root/config
     fi
-    ./.jiri_root/bin/jiri update
+    run_jiri_update ./.jiri_root/bin/jiri
     
     echo "[Progress] Running initial build with old Jiri..."
     scripts/fx set "$CONFIG_NAME"
@@ -374,7 +427,7 @@ cp "$TEST_DIR/new_jiri" "$TEST_ROOT/.jiri_root/bin/jiri"
 JIRI_BIN="./.jiri_root/bin/jiri"
 
 echo "[Progress] Verifying Jiri update with new Jiri..."
-"$JIRI_BIN" update
+    run_jiri_update "$JIRI_BIN"
 
 # Verify build still works and is no-op
 scripts/fx build
@@ -386,7 +439,7 @@ check_noop "$TEST_ROOT"
 echo "[Progress] Enabling prebuilt cache in main tree..."
 "$JIRI_BIN" init -prebuilt-cache=true
 echo "[Progress] Running jiri update to migrate to cache..."
-"$JIRI_BIN" update
+run_jiri_update "$JIRI_BIN"
 
 echo "[Progress] Building after cache enablement..."
 scripts/fx build
@@ -395,7 +448,7 @@ check_noop "$TEST_ROOT"
 echo "[Progress] Disabling prebuilt cache in main tree..."
 "$JIRI_BIN" init -prebuilt-cache=false
 echo "[Progress] Running jiri update to restore from cache..."
-"$JIRI_BIN" update
+run_jiri_update "$JIRI_BIN"
 
 echo "[Progress] Building after cache disablement..."
 scripts/fx build
@@ -452,7 +505,7 @@ check_noop "$WT_PATH"
 
 echo "[Progress] Updating main tree and verifying worktree no-op..."
 cd "$TEST_ROOT"
-"$JIRI_BIN" update
+run_jiri_update "$JIRI_BIN"
 
 cd "$WT_PATH"
 check_noop "$WT_PATH"
@@ -468,7 +521,7 @@ echo "[Progress] Enabling cache in main tree..."
 cd "$TEST_ROOT"
 "$JIRI_BIN" init -prebuilt-cache=true
 echo "[Progress] Updating main tree (migration)..."
-"$JIRI_BIN" update
+run_jiri_update "$JIRI_BIN"
 scripts/fx build
 check_noop "$TEST_ROOT"
 
