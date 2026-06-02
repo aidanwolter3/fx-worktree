@@ -105,12 +105,7 @@ run_jiri_update() {
                 git -c user.name="E2E Test" -c user.email="e2e@test.com" cherry-pick "$INSTALL_BASE_COMMIT"
             )
         fi
-        echo "[Progress] Re-applying GN threads patch after update..."
-        (
-            cd "$REAL_FUCHSIA_DIR"
-            python3 "$TEST_DIR/patch_regenerator.py"
-            git -c user.name="E2E Test" -c user.email="e2e@test.com" commit -m "temp: patch GN threads for E2E" build/regenerator.py
-        )
+
         echo "DEBUG TIMESTAMPS after run_jiri_update:"
         stat -c "  %y %n" build/regenerator.py || true
         if [ -d "out" ]; then
@@ -146,7 +141,6 @@ cleanup() {
                 ORIG_HEAD=$(cat "$TEST_DIR/orig_head")
                 echo "Resetting repository to $ORIG_HEAD..."
                 git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
-                git -C "$REAL_FUCHSIA_DIR" checkout build/regenerator.py
             fi
             if [ -f "$TEST_DIR/backup_gn" ]; then
                 echo "Restoring original GN..."
@@ -168,7 +162,15 @@ cleanup() {
                 ORIG_HEAD=$(cat "$TEST_DIR/orig_head")
                 echo "Resetting repository to $ORIG_HEAD..."
                 git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
-                git -C "$REAL_FUCHSIA_DIR" checkout build/regenerator.py
+            fi
+            if [ -f "$TEST_DIR/backup_jiri" ]; then
+                echo "Restoring original Jiri to $REAL_FUCHSIA_DIR..."
+                rm -f "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
+                cp "$TEST_DIR/backup_jiri" "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
+            fi
+            if [ -f "$TEST_DIR/backup_config" ]; then
+                echo "Restoring original config to $REAL_FUCHSIA_DIR..."
+                cp "$TEST_DIR/backup_config" "$REAL_FUCHSIA_DIR/.jiri_root/config"
             fi
             if [ -f "$TEST_DIR/backup_gn" ]; then
                 echo "Restoring original GN..."
@@ -179,15 +181,6 @@ cleanup() {
                 echo "Restoring original SHAC..."
                 rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
                 cp "$TEST_DIR/backup_shac" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-            fi
-            if [ -f "$TEST_DIR/backup_jiri" ]; then
-                echo "Restoring original Jiri to $REAL_FUCHSIA_DIR..."
-                rm -f "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
-                cp "$TEST_DIR/backup_jiri" "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
-            fi
-            if [ -f "$TEST_DIR/backup_config" ]; then
-                echo "Restoring original config to $REAL_FUCHSIA_DIR..."
-                cp "$TEST_DIR/backup_config" "$REAL_FUCHSIA_DIR/.jiri_root/config"
             fi
         fi
         echo "Keeping $TEST_DIR for debugging."
@@ -240,26 +233,7 @@ if [ "$REAL_MODE" = "true" ]; then
         echo "WARNING: Could not find install_base commit in log!"
     fi
 
-    echo "[Progress] Temporarily patching build/regenerator.py to limit GN to 1 thread..."
-    cat << 'EOF' > "$TEST_DIR/patch_regenerator.py"
-import sys
-with open('build/regenerator.py', 'r') as f:
-    content = f.read()
-target = '"--ninja-outputs-file=ninja_outputs.json",'
-replacement = '"--ninja-outputs-file=ninja_outputs.json",\n            "--threads=1",'
-if target in content:
-    content = content.replace(target, replacement)
-    with open('build/regenerator.py', 'w') as f:
-        f.write(content)
-    print('Patched build/regenerator.py successfully')
-else:
-    print('Failed to find target in build/regenerator.py')
-    sys.exit(1)
-EOF
-    python3 "$TEST_DIR/patch_regenerator.py"
 
-    # Commit it so it is checked out in worktrees
-    git -c user.name="E2E Test" -c user.email="e2e@test.com" commit -m "temp: patch GN threads for E2E" build/regenerator.py
 fi
 
 # Build fx-worktree
@@ -582,6 +556,13 @@ fi
 echo "[Progress] Building after cache enablement..."
 scripts/fx build
 check_noop "$TEST_ROOT"
+
+if [ "$REAL_MODE" = "true" ]; then
+    echo "[Progress] Testing format-code with cache enabled..."
+    echo "" >> build/bazel/scripts/bazel_source_path_mapper.py
+    scripts/fx format-code
+    git checkout build/bazel/scripts/bazel_source_path_mapper.py
+fi
 
 echo "[Progress] Disabling prebuilt cache in main tree..."
 "$JIRI_BIN" init -prebuilt-cache=false
