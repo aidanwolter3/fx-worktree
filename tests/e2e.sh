@@ -87,6 +87,16 @@ run_jiri_update() {
     fi
     "$jiri_bin" update "$@"
     if [ "$REAL_MODE" = "true" ]; then
+        if [ -n "$CUSTOM_GN_PATH" ]; then
+            echo "[Progress] Injecting custom GN from $CUSTOM_GN_PATH..."
+            rm -f "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+            cp "$CUSTOM_GN_PATH" "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+        fi
+        if [ -n "$CUSTOM_SHAC_PATH" ]; then
+            echo "[Progress] Injecting custom SHAC from $CUSTOM_SHAC_PATH..."
+            rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
+            cp "$CUSTOM_SHAC_PATH" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
+        fi
         if [ -n "$INSTALL_BASE_COMMIT" ]; then
             echo "[Progress] Cherry-picking install_base commit after update..."
             (
@@ -138,6 +148,16 @@ cleanup() {
                 git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
                 git -C "$REAL_FUCHSIA_DIR" checkout build/regenerator.py
             fi
+            if [ -f "$TEST_DIR/backup_gn" ]; then
+                echo "Restoring original GN..."
+                rm -f "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+                cp "$TEST_DIR/backup_gn" "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+            fi
+            if [ -f "$TEST_DIR/backup_shac" ]; then
+                echo "Restoring original SHAC..."
+                rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
+                cp "$TEST_DIR/backup_shac" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
+            fi
         fi
         echo "Cleaning up $TEST_DIR..."
         rm -rf "$TEST_DIR"
@@ -149,6 +169,16 @@ cleanup() {
                 echo "Resetting repository to $ORIG_HEAD..."
                 git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
                 git -C "$REAL_FUCHSIA_DIR" checkout build/regenerator.py
+            fi
+            if [ -f "$TEST_DIR/backup_gn" ]; then
+                echo "Restoring original GN..."
+                rm -f "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+                cp "$TEST_DIR/backup_gn" "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+            fi
+            if [ -f "$TEST_DIR/backup_shac" ]; then
+                echo "Restoring original SHAC..."
+                rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
+                cp "$TEST_DIR/backup_shac" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
             fi
             if [ -f "$TEST_DIR/backup_jiri" ]; then
                 echo "Restoring original Jiri to $REAL_FUCHSIA_DIR..."
@@ -190,6 +220,12 @@ if [ "$REAL_MODE" = "true" ]; then
     cp .jiri_root/bin/jiri "$TEST_DIR/backup_jiri"
     if [ -f .jiri_root/config ]; then
         cp .jiri_root/config "$TEST_DIR/backup_config"
+    fi
+    if [ -n "$CUSTOM_GN_PATH" ] && [ -f prebuilt/third_party/gn/linux-x64/gn ]; then
+        cp prebuilt/third_party/gn/linux-x64/gn "$TEST_DIR/backup_gn"
+    fi
+    if [ -n "$CUSTOM_SHAC_PATH" ] && [ -f prebuilt/tools/shac/shac ]; then
+        cp prebuilt/tools/shac/shac "$TEST_DIR/backup_shac"
     fi
 
     # Capture original HEAD

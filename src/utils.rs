@@ -160,8 +160,30 @@ pub fn copy_toolchain_metadata(config: &Config, workspace_path: &Path) -> Result
 
     let base_bin = base_jiri_root.join("bin");
     let ws_bin = ws_jiri_root.join("bin");
-    if base_bin.exists() && !ws_bin.exists() {
-        std::os::unix::fs::symlink(&base_bin, &ws_bin)?;
+    if base_bin.exists() {
+        if ws_bin.is_symlink() || ws_bin.exists() {
+            let _ = fs::remove_file(&ws_bin);
+            let _ = fs::remove_dir_all(&ws_bin);
+        }
+        let home = std::env::var("HOME").context("Failed to get HOME environment variable")?;
+        let local_jiri = Path::new(&home).join("src/jiri/jiri");
+        if local_jiri.exists() {
+            log::info!("Injecting local jiri from {:?}", local_jiri);
+            fs::create_dir_all(&ws_bin)?;
+            for entry in fs::read_dir(&base_bin)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                let dest = ws_bin.join(&name);
+                if name_str == "jiri" {
+                    std::os::unix::fs::symlink(&local_jiri, &dest)?;
+                } else {
+                    std::os::unix::fs::symlink(entry.path(), &dest)?;
+                }
+            }
+        } else {
+            std::os::unix::fs::symlink(&base_bin, &ws_bin)?;
+        }
     }
 
     for file_name in &["config", "prebuilt.json", "prebuilt_versions.json"] {

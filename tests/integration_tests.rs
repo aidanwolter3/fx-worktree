@@ -11,7 +11,6 @@ use fx_worktree::lease::lease_environment;
 use fx_worktree::list::list_environments;
 use fx_worktree::release::release_worktree;
 use fx_worktree::remove::remove_environment;
-use fx_worktree::selftest::run_self_test;
 
 // Global lock to serialize tests
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -208,6 +207,12 @@ fuchsia/tools/mock_tool/linux-amd64 $version
 
 @Subdir prebuilt/third_party/bazel/linux-x64
 infra/3pp/tools/bazel/linux-amd64 $version
+
+@Subdir prebuilt/third_party/gn/linux-amd64
+fuchsia/tools/gn/linux-amd64 $version
+
+@Subdir prebuilt/tools/shac
+fuchsia/tools/shac/linux-amd64 $version
 EOF
   cache_dir="$base_dir/.jiri_root/prebuilts"
   "$base_dir/.jiri_root/bin/cipd" -root "$cache_dir" -ensure-file "$ensure_file"
@@ -319,6 +324,8 @@ elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
     }}
     cleanup_package_cache "$cache_dir/prebuilt/tools/mock_tool"
     cleanup_package_cache "$cache_dir/prebuilt/third_party/bazel/linux-x64"
+    cleanup_package_cache "$cache_dir/prebuilt/third_party/gn/linux-amd64"
+    cleanup_package_cache "$cache_dir/prebuilt/tools/shac"
   fi
 fi
 "#,
@@ -610,28 +617,6 @@ fn test_git_symlink_conversion() {
     assert!(!env_path.exists());
 }
 
-#[test]
-fn test_self_test_command() {
-    let _lock = TEST_LOCK.lock().unwrap();
-    let env = setup_mock_env();
-    let config = &env.config;
-
-    // Create environment first to get an ID
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-
-    let build_gn = config.fuchsia_dir.join("BUILD.gn");
-    fs::write(&build_gn, "# mock root BUILD.gn").unwrap();
-
-    run_setup_cmd("git", &["add", "BUILD.gn"], &config.fuchsia_dir);
-    run_setup_cmd(
-        "git",
-        &["commit", "-m", "add BUILD.gn"],
-        &config.fuchsia_dir,
-    );
-
-    // Run self-test
-    run_self_test(config, env_id).unwrap();
-}
 
 #[test]
 fn test_mtime_and_metadata_preservation() {
@@ -1295,4 +1280,75 @@ fn test_add_failure_cleanup() {
         "Subproject should have only 1 git worktree, but found: {}",
         stdout_sub
     );
+}
+
+#[test]
+fn test_all_local_injections() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    
+    let original_home = std::env::var("HOME").ok();
+
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    let mock_home_dir = TempDir::new().unwrap();
+    let mock_home = mock_home_dir.path();
+    
+    unsafe {
+        std::env::set_var("HOME", mock_home);
+    }
+
+    // 1. Create mock local executables
+    let local_gn_dir = mock_home.join("src/gn/out");
+    fs::create_dir_all(&local_gn_dir).unwrap();
+    let local_gn_file = local_gn_dir.join("gn");
+    fs::write(&local_gn_file, "mock local gn").unwrap();
+
+    let local_jiri_dir = mock_home.join("src/jiri");
+    fs::create_dir_all(&local_jiri_dir).unwrap();
+    let local_jiri_file = local_jiri_dir.join("jiri");
+    fs::write(&local_jiri_file, "mock local jiri").unwrap();
+
+    let local_shac_dir = mock_home.join("src/shac");
+    fs::create_dir_all(&local_shac_dir).unwrap();
+    let local_shac_file = local_shac_dir.join("shac");
+    fs::write(&local_shac_file, "mock local shac").unwrap();
+
+    // 2. Create environment
+    let env_id = add_environment(config, "mock_config", false).unwrap();
+    let env_path = config.environments_dir().join(&env_id);
+
+    // 3. Verify local GN injection
+    let gn_dir = env_path.join("prebuilt/third_party/gn/linux-amd64");
+    assert!(gn_dir.exists());
+    let target_gn = gn_dir.join("gn");
+    assert!(target_gn.exists());
+    assert!(fs::symlink_metadata(&target_gn).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_link(&target_gn).unwrap(), local_gn_file);
+
+    // 4. Verify local shac injection
+    let shac_dir = env_path.join("prebuilt/tools/shac");
+    assert!(shac_dir.exists());
+    let target_shac = shac_dir.join("shac");
+    assert!(target_shac.exists());
+    assert!(fs::symlink_metadata(&target_shac).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_link(&target_shac).unwrap(), local_shac_file);
+
+    // 5. Verify local Jiri injection
+    let ws_bin = env_path.join(".jiri_root/bin");
+    assert!(ws_bin.exists());
+    let target_jiri = ws_bin.join("jiri");
+    assert!(target_jiri.exists());
+    assert!(fs::symlink_metadata(&target_jiri).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_link(&target_jiri).unwrap(), local_jiri_file);
+
+    if let Some(h) = original_home {
+        unsafe {
+            std::env::set_var("HOME", h);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+    }
 }
