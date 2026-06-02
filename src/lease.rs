@@ -2,7 +2,8 @@ use crate::config::Config;
 use crate::environment::EnvironmentInfo;
 use anyhow::{Context, Result, anyhow};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::SystemTime;
 
 pub fn lease_environment(
@@ -120,7 +121,79 @@ pub fn lease_environment(
         }
     }
 
+    if let Err(e) = setup_branch(&env_path, agent_id) {
+        rollback();
+        return Err(e);
+    }
+
     config.record_last_active(&env_info.path)?;
 
     Ok(env_info)
+}
+
+fn setup_branch(workspace_path: &Path, agent_id: &str) -> Result<()> {
+    if agent_id.is_empty() {
+        return Ok(());
+    }
+
+    let branch_name = if agent_id.starts_with("feat/") || agent_id.starts_with("bug/") {
+        agent_id.to_string()
+    } else if agent_id.to_uppercase().starts_with("T-") {
+        format!("feat/{}", agent_id.to_lowercase())
+    } else {
+        format!("feat/{}", agent_id)
+    };
+
+    log::info!("Setting up branch {} in {:?}", branch_name, workspace_path);
+
+    // Check if branch already exists
+    let branch_exists = Command::new("git")
+        .args(&["show-ref", "--verify", &format!("refs/heads/{}", branch_name)])
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to run git show-ref")?;
+
+    if branch_exists.status.success() {
+        // Branch exists, check it out
+        let output = Command::new("git")
+            .args(&["checkout", &branch_name])
+            .current_dir(workspace_path)
+            .output()
+            .context("Failed to run git checkout")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("already used by worktree") {
+                log::warn!(
+                    "Branch {} is already checked out in another worktree. Staying on detached HEAD.",
+                    branch_name
+                );
+                eprintln!(
+                    "⚠ Warning: Branch {} is already checked out in another worktree. Staying on detached HEAD.",
+                    branch_name
+                );
+            } else {
+                return Err(anyhow!(
+                    "Failed to checkout existing branch {}: {}",
+                    branch_name,
+                    stderr
+                ));
+            }
+        }
+    } else {
+        // Branch does not exist, create and checkout
+        let output = Command::new("git")
+            .args(&["checkout", "-b", &branch_name])
+            .current_dir(workspace_path)
+            .output()
+            .context("Failed to run git checkout -b")?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to create and checkout branch {}: {}",
+                branch_name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+
+    Ok(())
 }
