@@ -214,7 +214,7 @@ fuchsia/tools/gn/linux-amd64 $version
 @Subdir prebuilt/tools/shac
 fuchsia/tools/shac/linux-amd64 $version
 EOF
-  cache_dir="$base_dir/.jiri_root/prebuilts"
+  cache_dir="$base_dir/.jiri_root/packages"
   "$base_dir/.jiri_root/bin/cipd" -root "$cache_dir" -ensure-file "$ensure_file"
   
   while read -r line || [ -n "$line" ]; do
@@ -298,7 +298,7 @@ elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
     done
   fi
   
-  cache_dir="$base_dir/.jiri_root/prebuilts"
+  cache_dir="$base_dir/.jiri_root/packages"
   if [ -d "$cache_dir" ]; then
     cleanup_package_cache() {{
       local pkg_cache_dir=$1
@@ -369,7 +369,7 @@ if [ -n "$root_dir" ] && [ -n "$ensure_file" ]; then
     else
       read -r pkg ver <<< "$line"
       if [ -n "$current_subdir" ]; then
-        if [[ "$root_dir" =~ \.jiri_root/prebuilts$ ]]; then
+        if [[ "$root_dir" =~ \.jiri_root/packages$ ]]; then
           target_dir="$root_dir/$current_subdir/$ver"
         else
           target_dir="$root_dir/$current_subdir"
@@ -921,7 +921,7 @@ fn test_prebuilt_isolation() {
     );
 
     // Verify cache before remove
-    let cache_dir = env.config.fuchsia_dir.join(".jiri_root/prebuilts");
+    let cache_dir = env.config.fuchsia_dir.join(".jiri_root/packages");
     let mock_tool_cache = cache_dir.join("prebuilt/tools/mock_tool");
     assert!(mock_tool_cache.join("version:1").exists());
     assert!(mock_tool_cache.join("version:2").exists());

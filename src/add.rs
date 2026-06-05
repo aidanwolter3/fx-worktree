@@ -4,12 +4,12 @@ use anyhow::{Context, Result};
 use std::fs;
 
 pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Result<String> {
-    if !quiet && !crate::utils::is_prebuilt_cache_enabled(&config.fuchsia_dir) {
+    if !quiet && !crate::utils::is_package_cache_enabled(&config.fuchsia_dir) {
         eprintln!(
-            "⚠ Warning: Prebuilt cache is disabled in the parent repository.\n\
-             Worktree creation will be slow because it has to copy prebuilts.\n\
+            "⚠ Warning: Package cache is disabled in the parent repository.\n\
+             Worktree creation will be slow because it has to copy packages.\n\
              To enable fast worktree creation, run:\n\
-             $ jiri init -prebuilt-cache=true\n"
+             $ jiri init -package-cache=true\n"
         );
     }
     let env_path = provision_workspace(config, config_name, quiet)?;
@@ -45,7 +45,7 @@ pub fn add_environment(config: &Config, config_name: &str, quiet: bool) -> Resul
         eprintln!("Adding worktree {}...", env_id);
     }
 
-    // Run sync to get prebuilts and ensure correct revisions (required for fx set)
+    // Run sync to get packages and ensure correct revisions (required for fx set)
     if let Err(e) = crate::sync::sync_environment(config, &env_id, &env_path, quiet) {
         cleanup();
         return Err(e);

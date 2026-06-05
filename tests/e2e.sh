@@ -487,7 +487,7 @@ else
     (cd "$NEW_JIRI_SRC" && go build -o "$TEST_DIR/pre_cleanup_jiri" ./cmd/jiri)
     
     echo "[Progress] Restoring cache symlinks to real directories..."
-    "$TEST_DIR/pre_cleanup_jiri" init -prebuilt-cache=false
+    "$TEST_DIR/pre_cleanup_jiri" init -package-cache=false
     "$TEST_DIR/pre_cleanup_jiri" update
 
     echo "[Progress] Restoring official (old) Jiri to real repo..."
@@ -522,11 +522,11 @@ scripts/fx build
 check_noop "$TEST_ROOT"
 
 # ==============================================================================
-# 4. Toggle Prebuilt Cache (Main Tree)
+# 4. Toggle Package Cache (Main Tree)
 # ==============================================================================
 
-echo "[Progress] Enabling prebuilt cache in main tree..."
-"$JIRI_BIN" init -prebuilt-cache=true
+echo "[Progress] Enabling package cache in main tree..."
+"$JIRI_BIN" init -package-cache=true
 echo "[Progress] Running jiri update to migrate to cache..."
 run_jiri_update "$JIRI_BIN"
 
@@ -564,8 +564,8 @@ if [ "$REAL_MODE" = "true" ]; then
     git checkout build/bazel/scripts/bazel_source_path_mapper.py
 fi
 
-echo "[Progress] Disabling prebuilt cache in main tree..."
-"$JIRI_BIN" init -prebuilt-cache=false
+echo "[Progress] Disabling package cache in main tree..."
+"$JIRI_BIN" init -package-cache=false
 echo "[Progress] Running jiri update to restore from cache..."
 run_jiri_update "$JIRI_BIN"
 
@@ -574,7 +574,7 @@ if [ "$REAL_MODE" = "false" ]; then
     check_file="$TEST_ROOT/prebuilt/third_party/web_engine_tests_latest/arch/x64/common_tests_manifest.json"
     if [ -L "$check_file" ]; then
         target=$(readlink "$check_file")
-        if [[ "$target" == *".jiri_root/prebuilts"* ]]; then
+        if [[ "$target" == *".jiri_root/packages"* ]]; then
             echo -e "${RED}FAIL: Restored symlink points to cache! Target: $target${NC}"
             exit 1
         else
@@ -683,7 +683,7 @@ check_noop "$WT_PATH"
 # ==============================================================================
 echo "[Progress] Enabling cache in main tree..."
 cd "$TEST_ROOT"
-"$JIRI_BIN" init -prebuilt-cache=true
+"$JIRI_BIN" init -package-cache=true
 echo "[Progress] Updating main tree (migration)..."
 run_jiri_update "$JIRI_BIN"
 scripts/fx build
