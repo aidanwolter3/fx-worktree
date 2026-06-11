@@ -125,32 +125,20 @@ Typical execution times on a local workstation:
 *   **`fx-worktree lease (sync=false)`** (instant lease without synchronizing code): `~3ms`
 *   **`jiri worktree remove`** (cleanup and delete worktree): `~10,000ms - 10,400ms`
 
-## Worktree to Outdir 1:1 Pairing
+## Worktree to Outdir 1:N Pairing
 
-A core design principle of `fx-worktree` is the strict **1:1 pairing between
-a Git Worktree and a Fuchsia Output Directory (`outdir`)**.
+A core design principle of `fx-worktree` is the strict isolation of build directories. A Jiri worktree can have **multiple dedicated build directories (outdirs)** (1:N pairing), but **multiple worktrees must never share the same build directory**.
 
 ### The Problem with Shared Build Directories
-In Fuchsia, the build configuration (`args.gn`) and build artifacts are stored
-in the `outdir`. This configuration contains absolute paths referencing the
-source tree (the worktree).
-*   **Path Invalidations**: If multiple worktrees shared a single `outdir`,
-    switching between worktrees would constantly invalidate build paths,
-    forcing GN to regenerate and Ninja to re-compile most of the codebase.
-    This destroys the possibility of incremental builds.
-*   **State Desynchronization**: If a single worktree tried to use multiple
-    `outdirs` dynamically, the build state would become desynchronized,
-    leading to unexpected rebuilds or build failures.
+In Fuchsia, the build configuration (`args.gn`) and build artifacts are stored in the `outdir`. This configuration contains absolute paths referencing the source tree (the worktree).
+*   **Path Invalidations**: If multiple worktrees shared a single `outdir`, switching between worktrees would constantly invalidate build paths, forcing GN to regenerate and Ninja to re-compile most of the codebase. This destroys the possibility of incremental builds.
+*   **State Desynchronization**: Sharing an outdir between different git states leads to desynchronized build files and frequent full rebuilds.
 
-### The 1:1 Solution
-`fx-worktree` manages this complexity by ensuring that when a worktree is
-created, a dedicated `outdir` is provisioned alongside it.
-*   **Persistent Association**: The worktree is permanently paired with its
-    dedicated `outdir`.
-*   **No-Op Incremental Builds**: Because the source files and build artifacts
-    remain in sync, subsequent builds in the same leased worktree can
-    determine that nothing has changed and complete in **less than 3
-    seconds**.
+### The 1:N Solution
+`fx-worktree` allows a single worktree to contain multiple build configurations (e.g. `out/fuchsia.x64` and `out/fuchsia.arm64`) as long as they are dedicated to that worktree.
+*   **Isolation**: Each outdir remains locally isolated inside its parent worktree.
+*   **Configuration Backups**: `fx-worktree` automatically backs up the build configuration (`args.gn`) of all outdirs when a lease is acquired, and restores them at release time, preventing configuration drift.
+*   **No-Op Incremental Builds**: Because the build directory's artifacts remain in sync with the worktree's source state, subsequent builds in the same leased worktree can determine that nothing has changed and complete in **less than 3 seconds**.
 
 ### Zsh Completions
 
