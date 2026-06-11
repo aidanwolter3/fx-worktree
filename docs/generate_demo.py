@@ -150,7 +150,7 @@ def run_cmd(bin_path, fuchsia_dir, args):
     env = os.environ.copy()
     env["FUCHSIA_DIR"] = fuchsia_dir
     env["FORCE_COLOR"] = "1"
-    res = subprocess.run([bin_path] + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    res = subprocess.run([bin_path] + args, cwd=fuchsia_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return res.stdout
 
 def generate_frames(bin_path):
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     # Compile fx-worktree in release mode first to ensure we use the latest binary
     print("Compiling fx-worktree in release mode...")
     subprocess.run(["cargo", "build", "--release"], check=True)
-    bin_path = "target/release/fx-worktree"
+    bin_path = os.path.abspath("target/release/fx-worktree")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
