@@ -1,123 +1,99 @@
 ---
 name: fx-worktree
 description: >-
-  Manages Fuchsia build directories (outdirs) and isolated git worktrees (workspaces)
-  for parallel agent executions, supporting RBE and cache reuse.
-tags: [fuchsia, workspace, build, RBE, cache, worktree]
+  Leases and manages Fuchsia worktrees from a pool of Jiri worktrees,
+  supporting RBE and incremental builds.
+tags: [fuchsia, workspace, build, worktree, lease]
 support_tier: primary
 category: infrastructure
-version: 1.2.0
+version: 2.0.0
 ---
 
 # `fx-worktree` (Fuchsia Worktree Manager)
 
-`fx-worktree` is a CLI tool designed to manage parallel development environments (worktrees) inside a Fuchsia checkout. It allows multiple AI agents or developers to compile and test code concurrently without conflicting build directories or git states.
+`fx-worktree` is a CLI tool designed to manage parallel development worktrees inside a Fuchsia checkout. It allows multiple AI agents or developers to compile and test code concurrently without conflicting build directories or git states.
+
+`fx-worktree` relies on native `jiri worktree` commands for creation and removal, and manages the pool lifecycle (marking as free, leasing, and releasing).
 
 ## When to Use
 
 Use `fx-worktree` when:
 *   You need to lease an isolated worktree to make changes and compile them.
-*   You want to run builds in parallel without conflicting with the main checkout or other agents.
+*   You want to run builds in parallel without conflicting with the main checkout.
 *   You want to reuse a shared pool of persistent worktrees to speed up compilation (preserving Ninja cache).
-*   You want to verify your fx-worktree setup via the E2E test suite.
+*   You want to verify your fx-worktree setup via the E2E test suite or benchmark utility.
 
 ## CLI Commands
 
 ### 1. Worktree Pool Management
-These commands manage the pool of persistent worktrees. The worktrees (including their build directories) reside physically under `~/.fuchsia/worktrees/environments/<worktree_id>`.
+You create and manage the physical directories of worktrees using `jiri` directly. Worktrees reside under `.jiri_root/worktrees/`.
 
-*   **Add a Worktree**:
+*   **Mark a Worktree as Free**:
     ```bash
-    fx-worktree add <config_name>
+    fx-worktree mark-free <name>
     ```
-    Add a new worktree with a dedicated outdir. E.g.:
-    ```bash
-    fx-worktree add fuchsia_internal.x64
-    ```
+    Marks a worktree as free (available for leasing by agents).
 
-*   **Remove a Worktree**:
+*   **Mark a Worktree as Reserved**:
     ```bash
-    fx-worktree remove <worktree_id>
+    fx-worktree mark-reserved <name>
     ```
-    Remove a worktree and its dedicated outdir (cannot remove if currently leased).
+    Marks a free worktree as reserved (not available for leasing).
 
 *   **List Worktrees**:
     ```bash
     fx-worktree list
     ```
-    List worktrees.
+    Lists all Jiri-managed worktrees, highlighting their status (`Reserved`, `Free`, or `In Use`) and their build configurations.
 
 ### 2. Lease & Lifecycle
 *   **Lease a Worktree**:
     ```bash
-    fx-worktree lease <config_name> [--agent-id <agent_name>] [--sync]
+    fx-worktree lease <name> [--agent-id <agent_name>] [--sync]
+    # OR
+    fx-worktree lease --any [--agent-id <agent_name>] [--sync]
     ```
-    Lease a worktree to start work.
-    By default, it does NOT sync the worktree. Pass `--sync` to update it to the latest code in the main fuchsia checkout and update prebuilts.
-
-*   **Sync a Worktree**:
-    ```bash
-    fx-worktree sync <worktree_id>
-    ```
-    Update a worktree to the latest code in the main fuchsia checkout.
+    Leases a free worktree.
+    *   `--sync`: Opt-in to update the worktree to the latest code in the main fuchsia checkout and update Jiri projects.
+    *   `--agent-id`: Metadata to track which agent leased the worktree.
 
 *   **Release a Worktree**:
     ```bash
-    fx-worktree release <worktree_id>
+    fx-worktree release <name>
     ```
-    Release and reset a worktree (does a git reset).
+    Resets the leased worktree and releases it back to the pool (marks it `Free` again).
 
 *   **Change Directory**:
     ```bash
-    fx-worktree cd [<worktree_id>]
+    fx-worktree cd [<name>]
     ```
-    Change directory to a worktree (shell wrapper required).
+    Changes directory to a worktree (shell wrapper required).
 
 *   **Locate Worktree Path (Hidden Command)**:
     ```bash
-    fx-worktree locate [<worktree_id>]
+    fx-worktree locate [<name>]
     ```
     Prints the absolute path of the worktree directory.
 
-### 3. Verification & Testing
+### 3. Verification & Benchmarking
 *   **Run E2E Test Suite**:
     ```bash
     ./tests/e2e.sh
     ```
-    Runs a comprehensive end-to-end test in Mock Mode (no Fuchsia checkout needed) to verify the `fx-worktree` tool's behavior (leasing, build regeneration, cache migration).
+    Runs E2E tests in Mock Mode (no Fuchsia checkout needed) to verify the `fx-worktree` tool's behavior.
 
-*   **Generate Shell Completions (Hidden Command)**:
+*   **Run Benchmark Script**:
     ```bash
-    fx-worktree completions <bash|elvish|fish|powershell|zsh>
+    ./tests/benchmark.sh
     ```
+    Measures the execution time of worktree creation, lease (with/without sync), release, and removal on a real Fuchsia checkout.
 
 ---
 
 ## Technical Design & Constraints
 
-### 1. RBE (Remote Build Execution) Support
-Fuchsia's RBE compiler wrappers require the build directory to be a subdirectory of the execution root (the workspace).
-`fx-worktree` satisfies this by creating the build directory directly inside the worktree (`<worktree_path>/out/default`).
-Since the worktree is a self-contained directory under `~/.fuchsia/worktrees/environments/`, RBE builds succeed.
+### 1. Worktree to Outdir 1:1 Pairing
+To achieve fast incremental builds, each worktree is permanently paired with its own output build directory. This avoids path invalidation issues in GN/Ninja and ensures subsequent builds in the same worktree can complete in under 3 seconds.
 
-### 2. Prebuilt Isolation & Shared Cache
-Fuchsia checkouts contain hundreds of prebuilt packages (toolchains, SDKs, firmware) managed by Jiri and CIPD. Sharing the parent's `prebuilt/` directory causes workspaces to dirty each other's builds when the parent updates.
-
-To isolate them while retaining cache sharing:
-*   **Querying**: `fx-worktree` queries the required packages for the workspace's revision using `jiri package` in the workspace.
-*   **Grouping**: Packages are grouped by their target path. This is critical because Jiri allows multiple packages to overlap in the same destination (e.g., Rust host compiler and target libraries both install to `prebuilt/third_party/rust/linux-x64`).
-*   **Shared Cache**: Packages are installed into a central cache at `~/.fuchsia/worktrees/shared-prebuilts/merged/<target_path_escaped>/<hash>/`. The hash is a SipHash of the sorted package names and versions in the group, ensuring different workspaces on the same revision share the exact same merged directories.
-*   **Mtime Clamping**: Some prebuilt packages contain files with artificial modification times in the far future (e.g., Bazel uses `2042-07-28` for determinism). Since Ninja tracks these as dynamic inputs (recorded in `.ninja_deps`), they always trigger rebuilds because today's build outputs are older than `2042`. To fix this, `fx-worktree` recursively clamps the modification times of all files in newly downloaded cache directories to a fixed past date (`2020-01-01 00:00:00 UTC`), preserving build cache no-ops.
-*   **Symlinking**: Individual package target directories in the workspace are symlinked to their corresponding directory in the shared cache.
-*   **Wheel Extraction**: Some dependencies (like `pydantic-core` and `protobuf-py3`) are distributed as CIPD wheel packages but extracted into the source tree by Jiri hooks. Since we isolate `prebuilt/` and avoid Jiri's slow `run-hooks` (which triggers network fetches), `fx-worktree` manually runs the local wheel extraction scripts (`extract_pydantic_core_wheel.sh` and `extract_protobuf_py3_wheel.sh`) during allocation to extract them locally in the workspace.
-
-### 3. Jiri Metadata in Git Worktrees
-Jiri stores project metadata (remote URL, branch) inside `.git/jiri/`. Because `git worktree add` creates a new Git directory under the parent's `.git/worktrees/<name>`, it lacks this Jiri metadata. Without it, `jiri` commands run in the workspace (such as `jiri package` to resolve prebuilts) fail to recognize projects as local and attempt to clone them from the network, causing severe performance hits.
-
-To resolve this, `fx-worktree` automatically symlinks the parent project's Jiri metadata directory (`.git/jiri`) into the worktree's Git directory (`.git/worktrees/<name>/jiri`) during setup/allocation. This makes `jiri` offline-friendly and extremely fast (completes in 1 second).
-
-### 4. Topology
-*   **Global Config Directory**: `~/.fuchsia/worktrees/`
-    *   `leases/`: Active lease files (`<worktree_id>.lease`).
-    *   `environments/`: Parent directory for active isolated workspaces (worktrees).
-    *   `shared-prebuilts/`: Central CIPD cache with merged subdirectories.
+### 2. State Isolation
+Lease state is kept completely decentralized. The tool writes `lease.json` (locking metadata) and `last_active` inside the `.jiri_root/worktrees/` directory. There is no global config folder anymore.
