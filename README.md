@@ -1,7 +1,7 @@
 # fx-worktree (Fuchsia Worktree Manager)
 
 `fx-worktree` is a stateless, concurrent-safe CLI tool designed to provision
-instantaneous, isolated development environments for parallel agents working on
+instantaneous, isolated development worktrees for parallel agents working on
 Fuchsia.
 
 `fx-worktree` relies on `jiri worktree` to manage the worktrees and prebuilts, while `fx-worktree` remains responsible for curating a multi-agent workflow.
@@ -18,77 +18,83 @@ cargo install --path . --force
 
 ## Usage
 
-In order to achieve fast incremental builds, worktrees are created and kept around in a pool.
-Agents will `lease` a worktree from the pool, complete their work, then `release` it back to the pool.
-
-### 1. Add a Worktree
-Add a new worktree with a dedicated outdir to the pool.
+In order to achieve fast incremental builds, worktrees are kept around in a pool.
+You create worktrees using Jiri directly:
 ```bash
-fx-worktree add <config_name>
+jiri worktree add .jiri_root/worktrees/<name>
+```
+Once created, you can navigate into the worktree and configure its build directories (e.g. `fx set fuchsia.x64`).
+
+By default, newly created worktrees are **Reserved** (intended for local manual work).
+To make a worktree available for automated agents to lease, you must explicitly mark it as **Free**.
+
+### 1. Mark a Worktree as Free
+Mark a reserved worktree as free so it can be leased.
+```bash
+fx-worktree mark-free <name>
 ```
 
-### 2. Lease a Worktree
-Lease a worktree from the pool to start work.
+### 2. Mark a Worktree as Reserved
+Mark a free worktree as reserved so it will not be leased by automated agents.
 ```bash
-fx-worktree lease <config_name> [--agent-id <agent_name>] [--sync] [--json]
+fx-worktree mark-reserved <name>
+```
+
+### 3. Lease a Worktree
+Lease a free worktree. You can lease a specific worktree by name, or use `--any` to lease the first available free worktree.
+```bash
+fx-worktree lease <name> [--agent-id <agent_name>] [--sync] [--json]
+# OR
+fx-worktree lease --any [--agent-id <agent_name>] [--sync] [--json]
 ```
 *   `--sync`: Opt-in to update the worktree to the latest code in the main
     fuchsia checkout, clean it, and download/isolate prebuilts.
+*   `--agent-id`: Optional metadata to track which agent leased the worktree.
 
 *   **Default Output (Human Friendly):**
     ```none
     ✔ Worktree leased successfully!
 
-      Worktree ID  : fuchsia.x64-d704c897
-      Agent ID     : agent-2f26359d
-      Config       : fuchsia.x64
-      Path         : /usr/local/google/home/username/fuchsia/.jiri_root/worktrees/fuchsia.x64-d704c897
+      Worktree ID  : worktree2
+      Path         : /usr/local/google/home/username/fuchsia/.jiri_root/worktrees/worktree2
 
     To change directory into the worktree:
-      $ fx-worktree cd fuchsia.x64-d704c897  # Navigate to this specific worktree
-      $ fx-worktree cd                     # Navigate to the last leased worktree
+      $ fx-worktree cd worktree2  # Navigate to this specific worktree
+      $ fx-worktree cd            # Navigate to the last leased worktree
     ```
 
 *   **JSON Output (via `--json`):**
     ```json
-    {"environment_id":"fuchsia.x64-d704c897","agent_id":"agent-2f26359d","config":"fuchsia.x64","pid":2549294,"timestamp_sec":1779221652,"path":"/usr/local/google/home/username/fuchsia/.jiri_root/worktrees/fuchsia.x64-d704c897"}
+    {"worktree_id":"worktree2","agent_id":null,"pid":2549294,"timestamp_sec":1779221652,"path":"/usr/local/google/home/username/fuchsia/.jiri_root/worktrees/worktree2"}
     ```
 
-### 3. Update a Worktree (Sync)
-Update a worktree to the latest code in the main fuchsia checkout.
-```bash
-fx-worktree sync <worktree_id>
-```
-
 ### 4. List Worktrees
-List worktrees.
+List all Jiri-managed worktrees, highlighting their status (`Reserved`, `Free`, or `In Use`) and their build configurations.
 ```bash
 fx-worktree list [--json]
 ```
 
 *   **Default Output:**
     ```none
-    CONFIG        WORKTREE ID            STATUS
-    fuchsia.x64   fuchsia.x64-37954053   Free
-    fuchsia.x64   fuchsia.x64-d704c897   In Use (agent-2f26359d)
+    ../../fuchsia/.jiri_root/worktrees/worktree1    Reserved
+    ├── out/fuchsia.x64 (fuchsia.x64)
+    └── out/fuchsia.arm64 (fuchsia.arm64)
+    ../../fuchsia/.jiri_root/worktrees/worktree2    Free
+    └── out/fuchsia.x64 (fuchsia.x64)
+    ../../fuchsia/.jiri_root/worktrees/worktree3    In Use (agent-2f26359d)
+    └── out/fuchsia.x64 (fuchsia.x64)
     ```
 
 ### 5. Release a Worktree
-Reset a worktree (git reset) and release it back to the pool.
+Reset a leased worktree to the state before the lease and release it back to the pool (marks it `Free` again).
 ```bash
-fx-worktree release <worktree_id> [--json]
+fx-worktree release <name> [--json]
 ```
 
-### 6. Remove a Worktree
-Remove a worktree from the pool and its dedicated outdir.
-```bash
-fx-worktree remove <worktree_id>
-```
-
-### 7. Change Directory into Worktree
+### 6. Change Directory into Worktree
 Change directory to a worktree (shell wrapper required).
 ```bash
-fx-worktree cd [worktree_id]
+fx-worktree cd [name]
 ```
 
 ## Running Tests
@@ -104,6 +110,20 @@ Run the tests in **Real Mode** (against a real Fuchsia checkout, verifying real 
 ```bash
 ./tests/e2e.sh <path_to_fuchsia_dir> <config_name>
 ```
+
+## Benchmarks
+
+You can run the benchmark utility on a real Fuchsia directory to measure the execution times of various operations:
+```bash
+./tests/benchmark.sh
+```
+
+Typical execution times on a local workstation:
+*   **`jiri worktree add`** (creation of worktree): `~19,500ms - 21,200ms`
+*   **`fx-worktree lease (sync=true)`** (allocate worktree + sync with parent branch + isolate packages): `~7,500ms - 8,100ms`
+*   **`fx-worktree release`** (reset worktree + revert GN build config): `~2,000ms - 6,600ms` (depending on cleanup overhead)
+*   **`fx-worktree lease (sync=false)`** (instant lease without synchronizing code): `~3ms`
+*   **`jiri worktree remove`** (cleanup and delete worktree): `~10,000ms - 10,400ms`
 
 ## Worktree to Outdir 1:1 Pairing
 
@@ -128,7 +148,7 @@ created, a dedicated `outdir` is provisioned alongside it.
 *   **Persistent Association**: The worktree is permanently paired with its
     dedicated `outdir`.
 *   **No-Op Incremental Builds**: Because the source files and build artifacts
-    remain in sync, subsequent builds in the same leased environment can
+    remain in sync, subsequent builds in the same leased worktree can
     determine that nothing has changed and complete in **less than 3
     seconds**.
 

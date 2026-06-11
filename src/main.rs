@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use fx_worktree::cli::{Cli, Commands};
 use fx_worktree::colors::Colors;
 use fx_worktree::config::Config;
-use fx_worktree::{add, lease, list, locate, release, remove, sync};
+use fx_worktree::{lease, list, locate, mark_free, mark_reserved, release};
 
 fn main() -> Result<()> {
     // Initialize logger (default to warn to silence info logs by default)
@@ -21,16 +21,15 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if cli.help || cli.command.is_none() {
+    if cli.command.is_none() {
         let mut cmd = Cli::command();
         let subcmd_name = cli.command.as_ref().map(|c| match c {
-            Commands::Add { .. } => "add",
-            Commands::Remove { .. } => "remove",
             Commands::List => "list",
             Commands::Lease { .. } => "lease",
-            Commands::Sync { .. } => "sync",
             Commands::Release { .. } => "release",
             Commands::Cd { .. } => "cd",
+            Commands::MarkFree { .. } => "mark-free",
+            Commands::MarkReserved { .. } => "mark-reserved",
             Commands::Locate { .. } => "locate",
             Commands::Completions { .. } => "completions",
         });
@@ -48,121 +47,64 @@ fn main() -> Result<()> {
     }
 
     match cli.command.unwrap() {
-        Commands::Add { config: cfg } => {
-            let config = Config::new(cli.fuchsia_dir)?;
-            config.init_topology()?;
-            let env_id = add::add_environment(&config, &cfg, cli.json)?;
-            if cli.json {
-                println!(
-                    "{{\"environment_id\":\"{}\",\"config\":\"{}\"}}",
-                    env_id, cfg
-                );
-            } else {
-                println!(
-                    "{} Worktree {} successfully added for config {}.",
-                    colors.green("✔"),
-                    colors.blue(&env_id),
-                    colors.blue(&cfg)
-                );
-            }
-        }
-        Commands::Remove { id, force } => {
-            let id = match id {
-                Some(id) => id,
-                None => {
-                    let mut cmd = Cli::command();
-                    let subcmd = cmd.find_subcommand_mut("remove").unwrap();
-                    println!("{}", subcmd.render_usage());
-                    return Err(anyhow::anyhow!(
-                        "error: the following required arguments were not provided:\n  <ID>"
-                    ));
-                }
-            };
-            let config = Config::new(cli.fuchsia_dir)?;
-            config.init_topology()?;
-            remove::remove_environment(&config, &id, force, cli.json)?;
-            if cli.json {
-                println!("{{\"removed\":true,\"environment_id\":\"{}\"}}", id);
-            } else {
-                println!(
-                    "{} Worktree {} successfully removed.",
-                    colors.green("✔"),
-                    colors.blue(&id)
-                );
-            }
-        }
+
         Commands::List => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            list::list_environments(&config, cli.json)?;
+            list::list_worktrees(&config, cli.json)?;
         }
         Commands::Lease {
-            config: cfg,
+            name,
+            any,
             agent_id,
             sync,
             print_path_only,
         } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            let agent_id = agent_id.unwrap_or_else(|| {
-                let uuid = uuid::Uuid::new_v4().to_string();
-                format!("agent-{}", &uuid[0..8])
-            });
-            let env_info = lease::lease_environment(
+            let wt_info = lease::lease_worktree(
                 &config,
-                &cfg,
-                &agent_id,
+                name.as_deref(),
+                any,
+                agent_id.as_deref(),
                 sync,
                 cli.json || print_path_only,
             )?;
             if cli.json {
-                let json = serde_json::to_string(&env_info)?;
+                let json = serde_json::to_string(&wt_info)?;
                 println!("{}", json);
             } else if print_path_only {
-                println!("{}", env_info.path.to_string_lossy());
+                println!("{}", wt_info.path.to_string_lossy());
             } else {
                 println!("{} Worktree leased successfully!\n", colors.green("✔"));
-                println!("  Worktree ID  : {}", colors.blue(&env_info.environment_id));
-                println!("  Agent ID     : {}", colors.blue(&env_info.agent_id));
-                println!("  Config       : {}", colors.blue(&env_info.config));
+                println!("  Worktree ID  : {}", colors.blue(&wt_info.worktree_id));
+                if let Some(agent) = &wt_info.agent_id {
+                    println!("  Agent ID     : {}", colors.blue(agent));
+                }
                 println!(
                     "  Path         : {}",
-                    colors.blue(&env_info.path.to_string_lossy())
+                    colors.blue(&wt_info.path.to_string_lossy())
                 );
                 println!("\nTo change directory into the worktree:");
                 println!(
                     "  $ fx-worktree cd {}  # Navigate to this specific worktree",
-                    colors.blue(&env_info.environment_id)
+                    colors.blue(&wt_info.worktree_id)
                 );
                 println!(
                     "  $ fx-worktree cd                     # Navigate to the last leased worktree"
                 );
             }
         }
-        Commands::Sync { id } => {
-            let config = Config::new(cli.fuchsia_dir)?;
-            config.init_topology()?;
-            sync::sync_environment_by_id(&config, &id, cli.json)?;
-            if cli.json {
-                println!("{{\"synced\":true,\"environment_id\":\"{}\"}}", id);
-            } else {
-                println!(
-                    "{} Environment {} successfully synced.",
-                    colors.green("✔"),
-                    colors.blue(&id)
-                );
-            }
-        }
-        Commands::Release { id } => {
+        Commands::Release { name } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
             if !cli.json {
-                eprintln!("Resetting worktree {}...", colors.blue(&id));
+                eprintln!("Resetting worktree {}...", colors.blue(&name));
             }
-            let released_id = release::release_worktree(&config, &id)?;
+            let released_id = release::release_worktree(&config, &name)?;
             if cli.json {
                 println!(
-                    "{{\"released\":true,\"environment_id\":\"{}\"}}",
+                    "{{\"released\":true,\"worktree_id\":\"{}\"}}",
                     released_id
                 );
             } else {
@@ -173,14 +115,46 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Commands::MarkFree { name } => {
+            let config = Config::new(cli.fuchsia_dir)?;
+            config.init_topology()?;
+            let wt_id = mark_free::mark_free_worktree(&config, &name, cli.json)?;
+            if cli.json {
+                println!("{{\"worktree_id\":\"{}\",\"marked_free\":true}}", wt_id);
+            } else {
+                println!(
+                    "{} Worktree {} successfully marked as free.",
+                    colors.green("✔"),
+                    colors.blue(&wt_id)
+                );
+            }
+        }
+        Commands::MarkReserved { name } => {
+            let config = Config::new(cli.fuchsia_dir)?;
+            config.init_topology()?;
+            // Resolve path first to get the canonical ID (for output)
+            let path = locate::locate_path(&config, Some(name.clone()))?;
+            let id = path.file_name().unwrap().to_string_lossy().into_owned();
+
+            mark_reserved::mark_reserved_worktree(&config, &name, cli.json)?;
+            if cli.json {
+                println!("{{\"worktree_id\":\"{}\",\"marked_reserved\":true}}", id);
+            } else {
+                println!(
+                    "{} Worktree {} successfully marked as reserved.",
+                    colors.green("✔"),
+                    colors.blue(&id)
+                );
+            }
+        }
         Commands::Cd { .. } => {
             return Err(anyhow::anyhow!(
                 "The 'cd' command requires the fx-worktree shell wrapper. Make sure your shell is initialized correctly."
             ));
         }
-        Commands::Locate { id } => {
+        Commands::Locate { name } => {
             let config = Config::new(cli.fuchsia_dir)?;
-            let path = locate::locate_path(&config, id)?;
+            let path = locate::locate_path(&config, name)?;
             println!("{}", path.to_string_lossy());
         }
 
@@ -192,28 +166,40 @@ fn main() -> Result<()> {
                 String::from_utf8(buf).context("Failed to parse generated completions as UTF-8")?;
 
             if shell == clap_complete::Shell::Zsh {
-                // Patch positional ID completions
+                // Patch positional name completions
                 script = script.replace(
-                    "':id -- Worktree ID to remove (must be free):_default'",
-                    "':id -- Worktree ID to remove (must be free):_fx_worktree_free_ids'",
+                    "':name -- Worktree name to release (must be leased):_default'",
+                    "':name -- Worktree name to release (must be leased):_fx_worktree_leased_ids'",
                 );
                 script = script.replace(
-                    "':id -- Worktree ID to release (must be leased):_default'",
-                    "':id -- Worktree ID to release (must be leased):_fx_worktree_leased_ids'",
+                    "'::name -- Worktree name:_default'",
+                    "'::name -- Worktree name:_fx_worktree_all_ids'",
                 );
                 script = script.replace(
-                    "'::id -- Worktree ID:_default'",
-                    "'::id -- Worktree ID:_fx_worktree_all_ids'",
+                    "':name -- Worktree name to mark reserved:_default'",
+                    "':name -- Worktree name to mark reserved:_fx_worktree_free_ids'",
                 );
                 script = script.replace(
-                    "':id -- Worktree ID to sync:_default'",
-                    "':id -- Worktree ID to sync:_fx_worktree_all_ids'",
+                    "':name -- Worktree name to mark free:_default'",
+                    "':name -- Worktree name to mark free:_fx_worktree_reserved_ids'",
                 );
 
-                // Patch positional config completions
+                // Patch lease name completions
                 script = script.replace(
-                    "':config -- Configuration name (e.g. fuchsia.x64):_default'",
-                    "':config -- Configuration name (e.g. fuchsia.x64):_fx_worktree_configs'",
+                    "'::name -- Worktree name to lease:_default'",
+                    "'::name -- Worktree name to lease:_fx_worktree_free_ids'",
+                );
+
+                // Hide locate subcommand from completions list
+                script = script.replace(
+                    "'locate:Locate the path of a worktree' \\\n",
+                    "",
+                );
+
+                // Hide completions subcommand from completions list
+                script = script.replace(
+                    "'completions:Generate shell completion scripts to stdout' \\\n",
+                    "",
                 );
 
                 // Move entry point block to the very end of the file
@@ -228,27 +214,31 @@ fi"#;
                     script.push_str("\n\n# Custom dynamic completion helpers\n");
                     script.push_str(
                         r#"_fx_worktree_free_ids() {
-    local -a ids
-    ids=($(fx-worktree list 2>/dev/null | grep -E '\s+Free$' | awk '{print $2}'))
-    _describe -t ids 'free worktree ID' ids
+    local -a paths ids
+    paths=($(fx-worktree list 2>/dev/null | grep -vE '^[ └├]|No worktrees' | grep -E '\s+Free$' | awk '{print $1}'))
+    ids=("${(@)paths:t}")
+    _describe -t ids 'free worktree name' ids
 }
 
 _fx_worktree_leased_ids() {
-    local -a ids
-    ids=($(fx-worktree list 2>/dev/null | grep -E 'In Use' | awk '{print $2}'))
-    _describe -t ids 'leased worktree ID' ids
+    local -a paths ids
+    paths=($(fx-worktree list 2>/dev/null | grep -vE '^[ └├]|No worktrees' | grep -E 'In Use' | awk '{print $1}'))
+    ids=("${(@)paths:t}")
+    _describe -t ids 'leased worktree name' ids
+}
+
+_fx_worktree_reserved_ids() {
+    local -a paths ids
+    paths=($(fx-worktree list 2>/dev/null | grep -vE '^[ └├]|No worktrees' | grep -E 'Reserved' | awk '{print $1}'))
+    ids=("${(@)paths:t}")
+    _describe -t ids 'reserved worktree name' ids
 }
 
 _fx_worktree_all_ids() {
-    local -a ids
-    ids=($(fx-worktree list 2>/dev/null | tail -n +2 | awk '{print $2}'))
-    _describe -t ids 'worktree ID' ids
-}
-
-_fx_worktree_configs() {
-    local -a configs
-    configs=($(fx-worktree list 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -u))
-    _describe -t configs 'configuration' configs
+    local -a paths ids
+    paths=($(fx-worktree list 2>/dev/null | grep -vE '^[ └├]|No worktrees' | awk '{print $1}'))
+    ids=("${(@)paths:t}")
+    _describe -t ids 'worktree name' ids
 }
 "#,
                     );

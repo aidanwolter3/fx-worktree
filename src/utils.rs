@@ -1,9 +1,18 @@
-use crate::config::Config;
+// Copyright 2026 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! Generic system, file, and path utilities.
+
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Spawns a shell process to execute the given command.
+///
+/// Log details of execution, captures outputs, and returns an error containing
+/// stdout and stderr outputs if the command fails (exit code is non-zero).
 pub fn run_command(
     cmd: &str,
     args: &[&str],
@@ -39,6 +48,8 @@ pub fn run_command(
     Ok(output)
 }
 
+/// Copies a file from `src` to `dst` only if the destination doesn't exist
+/// or its size or bytes differ, reducing unnecessary writes and preventing mtime bumps.
 pub fn copy_file_if_different(src: &Path, dst: &Path) -> Result<()> {
     if !dst.exists() {
         if let Some(parent) = dst.parent() {
@@ -66,149 +77,10 @@ pub fn copy_file_if_different(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
-    fs::create_dir_all(&dst)
-        .with_context(|| format!("Failed to create directory {:?}", dst.as_ref()))?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        if ty.is_dir() {
-            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
-        } else {
-            let src_path = entry.path();
-            let dst_path = dst.as_ref().join(entry.file_name());
-            copy_file_if_different(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn find_worktrees(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut worktrees = Vec::new();
-    find_worktrees_recursive(dir, &mut worktrees)?;
-    // Sort in reverse depth order so nested repos are processed first
-    worktrees.sort_by_key(|p| p.components().count());
-    worktrees.reverse();
-    Ok(worktrees)
-}
-
-fn find_worktrees_recursive(dir: &Path, worktrees: &mut Vec<PathBuf>) -> Result<()> {
-    if dir.is_dir() {
-        let git_file = dir.join(".git");
-        if git_file.exists() {
-            worktrees.push(dir.to_path_buf());
-        }
-
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            if file_type.is_dir() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|name| {
-                        name == ".git"
-                            || name == "prebuilt"
-                            || name == ".jiri_root"
-                            || name == "out"
-                    })
-                {
-                    continue;
-                }
-                find_worktrees_recursive(&path, worktrees)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn copy_toolchain_metadata(config: &Config, workspace_path: &Path) -> Result<()> {
-    let base_ctf_releases = config
-        .fuchsia_dir
-        .join("sdk/ctf/build/internal/ctf_releases.gni");
-    let workspace_ctf_releases = workspace_path.join("sdk/ctf/build/internal/ctf_releases.gni");
-    if base_ctf_releases.exists() {
-        copy_file_if_different(&base_ctf_releases, &workspace_ctf_releases)?;
-    }
-
-    let base_jiri_gen = config.fuchsia_dir.join("build/info/jiri_generated");
-    let workspace_jiri_gen = workspace_path.join("build/info/jiri_generated");
-    if base_jiri_gen.exists() {
-        copy_dir_all(&base_jiri_gen, &workspace_jiri_gen)?;
-    }
-
-    let base_cipd_gni = config.fuchsia_dir.join("build/cipd.gni");
-    let workspace_cipd_gni = workspace_path.join("build/cipd.gni");
-    if base_cipd_gni.exists() {
-        copy_file_if_different(&base_cipd_gni, &workspace_cipd_gni)?;
-    }
-
-    let base_manifest = config.fuchsia_dir.join(".jiri_manifest");
-    let workspace_manifest = workspace_path.join(".jiri_manifest");
-    if base_manifest.exists() {
-        copy_file_if_different(&base_manifest, &workspace_manifest)?;
-    }
-
-    let base_jiri_root = config.fuchsia_dir.join(".jiri_root");
-    let ws_jiri_root = workspace_path.join(".jiri_root");
-
-    if ws_jiri_root.is_symlink() {
-        fs::remove_file(&ws_jiri_root)?;
-    }
-    fs::create_dir_all(&ws_jiri_root)?;
-
-    let base_bin = base_jiri_root.join("bin");
-    let ws_bin = ws_jiri_root.join("bin");
-    if base_bin.exists() {
-        if ws_bin.is_symlink() || ws_bin.exists() {
-            let _ = fs::remove_file(&ws_bin);
-            let _ = fs::remove_dir_all(&ws_bin);
-        }
-        let home = std::env::var("HOME").context("Failed to get HOME environment variable")?;
-        let local_jiri = Path::new(&home).join("src/jiri/jiri");
-        if local_jiri.exists() {
-            log::info!("Injecting local jiri from {:?}", local_jiri);
-            fs::create_dir_all(&ws_bin)?;
-            for entry in fs::read_dir(&base_bin)? {
-                let entry = entry?;
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                let dest = ws_bin.join(&name);
-                if name_str == "jiri" {
-                    std::os::unix::fs::symlink(&local_jiri, &dest)?;
-                } else {
-                    std::os::unix::fs::symlink(entry.path(), &dest)?;
-                }
-            }
-        } else {
-            std::os::unix::fs::symlink(&base_bin, &ws_bin)?;
-        }
-    }
-
-    for file_name in &["config", "prebuilt.json", "prebuilt_versions.json"] {
-        if *file_name == "config" && ws_jiri_root.join(file_name).exists() {
-            continue;
-        }
-        let base_file = base_jiri_root.join(file_name);
-        if base_file.exists() {
-            copy_file_if_different(&base_file, &ws_jiri_root.join(file_name))?;
-        }
-    }
-
-    let base_latest = base_jiri_root.join("update_history/latest");
-    let ws_latest = ws_jiri_root.join("update_history/latest");
-    if base_latest.exists() {
-        fs::create_dir_all(ws_latest.parent().unwrap())?;
-        copy_file_if_different(&base_latest, &ws_latest)?;
-    }
-
-    Ok(())
-}
-
 use std::fs::{File, FileTimes};
 use std::time::SystemTime;
 
+/// Gets the last modification time of the file at `path`.
 pub fn get_file_mtime(path: &Path) -> Result<SystemTime> {
     let metadata =
         fs::metadata(path).with_context(|| format!("Failed to get metadata for {:?}", path))?;
@@ -217,6 +89,7 @@ pub fn get_file_mtime(path: &Path) -> Result<SystemTime> {
         .with_context(|| format!("Failed to get mtime for {:?}", path))
 }
 
+/// Sets the last modification time of the file at `path` to `mtime`.
 pub fn set_file_mtime(path: &Path, mtime: SystemTime) -> Result<()> {
     let file = File::open(path)
         .with_context(|| format!("Failed to open file for setting times: {:?}", path))?;
@@ -226,143 +99,123 @@ pub fn set_file_mtime(path: &Path, mtime: SystemTime) -> Result<()> {
     Ok(())
 }
 
-pub fn get_config_name(workspace_path: &Path) -> Result<String> {
-    let args_gn_path = workspace_path.join("out/default/args.gn");
-    if !args_gn_path.exists() {
-        return Err(anyhow!("args.gn not found at {:?}", args_gn_path));
-    }
-    let content = fs::read_to_string(&args_gn_path)
-        .with_context(|| format!("Failed to read {:?}", args_gn_path))?;
-    let mut product = None;
-    let mut board = None;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with("build_info_product") {
-            if let Some(val) = line.split('=').nth(1) {
-                product = Some(val.trim().trim_matches('"').to_string());
+/// Computes the relative path from `base` to `path`.
+///
+/// Returns `None` if they are on different drives (Windows) or no relative path exists.
+pub fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    let mut ita = path.components();
+    let mut itb = base.components();
+    let mut comps = vec![];
+    loop {
+        match (ita.next(), itb.next()) {
+            (None, None) => break,
+            (Some(a), None) => {
+                comps.push(a);
+                for c in ita {
+                    comps.push(c);
+                }
+                break;
             }
-        } else if line.starts_with("build_info_board") {
-            if let Some(val) = line.split('=').nth(1) {
-                board = Some(val.trim().trim_matches('"').to_string());
+            (None, Some(_)) => {
+                comps.push(std::path::Component::ParentDir);
+            }
+            (Some(a), Some(b)) if a == b => (),
+            (Some(a), Some(_)) => {
+                comps.push(std::path::Component::ParentDir);
+                for _ in itb {
+                    comps.push(std::path::Component::ParentDir);
+                }
+                comps.push(a);
+                for c in ita {
+                    comps.push(c);
+                }
+                break;
             }
         }
     }
-    match (product, board) {
-        (Some(p), Some(b)) => {
-            if b.is_empty() {
-                Ok(p)
-            } else {
-                Ok(format!("{}.{}", p, b))
-            }
+    if comps.is_empty() {
+        Some(PathBuf::from("."))
+    } else {
+        let mut result = PathBuf::new();
+        for c in comps {
+            result.push(c);
         }
-        (Some(p), None) => Ok(p),
-        _ => Err(anyhow!(
-            "Failed to find build_info_product in {:?}",
-            args_gn_path
-        )),
+        Some(result)
     }
 }
-pub fn is_package_cache_enabled(fuchsia_dir: &Path) -> bool {
-    let config_path = fuchsia_dir.join(".jiri_root").join("config");
-    if !config_path.exists() {
-        return false;
+
+/// Finds the common directory prefix shared by two paths.
+pub fn common_prefix(a: &Path, b: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for (ca, cb) in a.components().zip(b.components()) {
+        if ca == cb {
+            result.push(ca);
+        } else {
+            break;
+        }
     }
-    let content = match fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(_) => return false,
+    result
+}
+
+/// Returns a shortened/relative representation of `path` with respect to `cwd`,
+/// if they share a common directory prefix.
+pub fn shorten_path(path: &Path, cwd: &Path) -> PathBuf {
+    let prefix = common_prefix(path, cwd);
+    let has_shared_prefix = if cfg!(unix) {
+        prefix.components().count() > 1
+    } else {
+        prefix.components().count() > 0
     };
 
-    if let Some(start) = content.find("<package_cache>") {
-        if let Some(end) = content[start..].find("</package_cache>") {
-            let section = &content[start..start + end];
-            let normalized: String = section.chars().filter(|c| !c.is_whitespace()).collect();
-            return normalized.contains("<enabled>true</enabled>");
+    if has_shared_prefix {
+        if let Some(rel) = diff_paths(path, cwd) {
+            return rel;
         }
     }
-    false
+    path.to_path_buf()
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
-    fn test_get_config_name_success() {
-        let dir = tempdir().unwrap();
-        let out_dir = dir.path().join("out/default");
-        fs::create_dir_all(&out_dir).unwrap();
-        let args_gn_path = out_dir.join("args.gn");
-        let mut file = File::create(args_gn_path).unwrap();
-        writeln!(file, "build_info_product = \"core\"").unwrap();
-        writeln!(file, "build_info_board = \"x64\"").unwrap();
-
-        let config = get_config_name(dir.path()).unwrap();
-        assert_eq!(config, "core.x64");
+    fn test_diff_paths() {
+        assert_eq!(
+            diff_paths(Path::new("/a/b/c/d"), Path::new("/a/b")),
+            Some(PathBuf::from("c/d"))
+        );
+        assert_eq!(
+            diff_paths(Path::new("/a/b"), Path::new("/a/b/c/d")),
+            Some(PathBuf::from("../.."))
+        );
+        assert_eq!(
+            diff_paths(Path::new("/a/b/c/d"), Path::new("/a/b/e/f")),
+            Some(PathBuf::from("../../c/d"))
+        );
+        assert_eq!(
+            diff_paths(Path::new("/a/b"), Path::new("/a/b")),
+            Some(PathBuf::from("."))
+        );
     }
 
     #[test]
-    fn test_get_config_name_product_only() {
-        let dir = tempdir().unwrap();
-        let out_dir = dir.path().join("out/default");
-        fs::create_dir_all(&out_dir).unwrap();
-        let args_gn_path = out_dir.join("args.gn");
-        let mut file = File::create(args_gn_path).unwrap();
-        writeln!(file, "build_info_product = \"core\"").unwrap();
+    fn test_shorten_path() {
+        let cwd = Path::new("/home/user/fuchsia/out/default");
+        
+        // Shares prefix "/home/user/fuchsia"
+        let wt = Path::new("/home/user/fuchsia/.jiri_root/worktrees/my-feature");
+        assert_eq!(
+            shorten_path(wt, cwd),
+            PathBuf::from("../../.jiri_root/worktrees/my-feature")
+        );
 
-        let config = get_config_name(dir.path()).unwrap();
-        assert_eq!(config, "core");
-    }
-
-    #[test]
-    fn test_get_config_name_empty_board() {
-        let dir = tempdir().unwrap();
-        let out_dir = dir.path().join("out/default");
-        fs::create_dir_all(&out_dir).unwrap();
-        let args_gn_path = out_dir.join("args.gn");
-        let mut file = File::create(args_gn_path).unwrap();
-        writeln!(file, "build_info_product = \"core\"").unwrap();
-        writeln!(file, "build_info_board = \"\"").unwrap();
-
-        let config = get_config_name(dir.path()).unwrap();
-        assert_eq!(config, "core");
-    }
-
-    #[test]
-    fn test_get_config_name_missing_product() {
-        let dir = tempdir().unwrap();
-        let out_dir = dir.path().join("out/default");
-        fs::create_dir_all(&out_dir).unwrap();
-        let args_gn_path = out_dir.join("args.gn");
-        let mut file = File::create(args_gn_path).unwrap();
-        writeln!(file, "build_info_board = \"x64\"").unwrap();
-
-        let res = get_config_name(dir.path());
-        assert!(res.is_err());
-    }
-
-    #[test]
-    fn test_get_config_name_no_args_gn() {
-        let dir = tempdir().unwrap();
-        let res = get_config_name(dir.path());
-        assert!(res.is_err());
-    }
-
-    #[test]
-    fn test_get_config_name_with_comments_and_spaces() {
-        let dir = tempdir().unwrap();
-        let out_dir = dir.path().join("out/default");
-        fs::create_dir_all(&out_dir).unwrap();
-        let args_gn_path = out_dir.join("args.gn");
-        let mut file = File::create(args_gn_path).unwrap();
-        writeln!(file, "# Some comment").unwrap();
-        writeln!(file, "  build_info_product   =   \"core-nested\"  ").unwrap();
-        writeln!(file, "other_var = \"value\"").unwrap();
-        writeln!(file, "build_info_board = \"arm64\"").unwrap();
-
-        let config = get_config_name(dir.path()).unwrap();
-        assert_eq!(config, "core-nested.arm64");
+        // Does not share prefix other than root
+        let other = Path::new("/tmp/foo");
+        assert_eq!(
+            shorten_path(other, cwd),
+            PathBuf::from("/tmp/foo")
+        );
     }
 }

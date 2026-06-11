@@ -133,10 +133,9 @@ def setup_mock_workspace():
             
     return test_dir, fuchsia_dir
 
-def run_cmd(bin_path, fuchsia_dir, fx_worktree_root, args):
+def run_cmd(bin_path, fuchsia_dir, args):
     env = os.environ.copy()
     env["FUCHSIA_DIR"] = fuchsia_dir
-    env["FX_WORKTREE_ROOT"] = fx_worktree_root
     env["FORCE_COLOR"] = "1"
     res = subprocess.run([bin_path] + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return res.stdout
@@ -164,13 +163,10 @@ def generate_frames(bin_path):
 
     # Set up mock workspace for execution
     test_dir, fuchsia_dir = setup_mock_workspace()
-    fx_worktree_root = os.path.join(test_dir, ".fx_worktree_root")
-    os.makedirs(fx_worktree_root)
-
     try:
         # 1. fx-worktree list
         type_command("fx-worktree list")
-        output = run_cmd(bin_path, fuchsia_dir, fx_worktree_root, ["list"])
+        output = run_cmd(bin_path, fuchsia_dir, ["list"])
         for line in output.splitlines():
             line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
             term.add_line(line)
@@ -178,7 +174,7 @@ def generate_frames(bin_path):
 
         # 2. fx-worktree lease fuchsia.x64
         type_command("fx-worktree lease fuchsia.x64")
-        output = run_cmd(bin_path, fuchsia_dir, fx_worktree_root, ["lease", "fuchsia.x64"])
+        output = run_cmd(bin_path, fuchsia_dir, ["lease", "fuchsia.x64"])
         leased_id = None
         for line in output.splitlines():
             line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
@@ -191,7 +187,7 @@ def generate_frames(bin_path):
 
         # 3. fx-worktree list again
         type_command("fx-worktree list")
-        output = run_cmd(bin_path, fuchsia_dir, fx_worktree_root, ["list"])
+        output = run_cmd(bin_path, fuchsia_dir, ["list"])
         for line in output.splitlines():
             line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
             term.add_line(line)
@@ -200,7 +196,7 @@ def generate_frames(bin_path):
         # 4. fx-worktree release <id>
         if leased_id:
             type_command(f"fx-worktree release {leased_id}")
-            output = run_cmd(bin_path, fuchsia_dir, fx_worktree_root, ["release", leased_id])
+            output = run_cmd(bin_path, fuchsia_dir, ["release", leased_id])
             for line in output.splitlines():
                 line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
                 term.add_line(line)

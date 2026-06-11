@@ -4,7 +4,7 @@
 # license that can be found in the LICENSE file.
 
 # Benchmark for fx-worktree operations on a real Fuchsia directory.
-# Runs add, lease, sync, release, and remove, measuring execution times.
+# Measures jiri worktree creation, fx-worktree lease/release, and cleanup.
 
 set -e
 
@@ -35,6 +35,10 @@ echo "Using binary: $FX_WORKTREE_BIN"
 echo "Building fx-worktree..."
 cargo build --manifest-path "$FX_WORKTREE_SRC/Cargo.toml"
 
+run_jiri() {
+    (cd "$FUCHSIA_DIR" && jiri "$@")
+}
+
 measure_time() {
     local label="$1"
     shift
@@ -54,64 +58,77 @@ measure_time() {
     fi
 }
 
-# Variable to store the worktree ID we create
-WT_ID=""
+# Determine matching outdir in the parent fuchsia directory
+PARENT_OUTDIR=""
+for d in "$FUCHSIA_DIR"/out/*; do
+    if [ -f "$d/args.gn" ]; then
+        p=$(grep "build_info_product" "$d/args.gn" | cut -d'"' -f2 || true)
+        b=$(grep "build_info_board" "$d/args.gn" | cut -d'"' -f2 || true)
+        if [ "$p.$b" = "$CONFIG" ] || [ "$p" = "$CONFIG" ]; then
+            PARENT_OUTDIR="$d"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PARENT_OUTDIR" ]; then
+    echo -e "${RED}ERROR: Could not find build outdir in $FUCHSIA_DIR matching config $CONFIG.${NC}"
+    echo "Make sure you have run 'fx set' for this config in the main tree."
+    exit 1
+fi
+
+OUTDIR_REL=$(basename "$PARENT_OUTDIR")
+echo "Found matching parent outdir: out/$OUTDIR_REL"
+
+WT_NAME="bench-wt-$$"
+WT_PATH="$FUCHSIA_DIR/.jiri_root/worktrees/$WT_NAME"
 
 cleanup() {
-    if [ -n "$WT_ID" ]; then
-        echo "Cleaning up worktree $WT_ID..."
-        # Release if leased (ignore error if not leased)
-        $FX_WORKTREE_BIN release "$WT_ID" >/dev/null 2>&1 || true
-        # Remove
-        $FX_WORKTREE_BIN remove "$WT_ID" >/dev/null 2>&1 || true
+    if [ -d "$WT_PATH" ]; then
+        echo "Cleaning up worktree at $WT_PATH..."
+        # Release if leased
+        $FX_WORKTREE_BIN release "$WT_NAME" >/dev/null 2>&1 || true
+        # Remove Jiri worktree
+        run_jiri worktree remove -force "$WT_PATH" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
 
-# 1. Benchmark 'add'
-echo -e "\n--- Running 'add' benchmark ---"
-# Capture output to get the ID
-add_output=$(mktemp)
-measure_time "fx-worktree add" $FX_WORKTREE_BIN --json add "$CONFIG" > "$add_output"
-WT_ID=$(json_pp < "$add_output" | grep "environment_id" | cut -d'"' -f4 || true)
-if [ -z "$WT_ID" ]; then
-    # Fallback parsing if json_pp is not available
-    WT_ID=$(grep -o '"environment_id":"[^"]*' "$add_output" | cut -d'"' -f4 || true)
-fi
-rm -f "$add_output"
+# 1. Benchmark 'jiri worktree add'
+echo -e "\n--- Running 'jiri worktree add' benchmark ---"
+measure_time "jiri worktree add" run_jiri worktree add "$WT_PATH"
 
-if [ -z "$WT_ID" ]; then
-    echo -e "${RED}ERROR: Failed to parse worktree ID from add output.${NC}"
-    exit 1
-fi
-echo "Created worktree: $WT_ID"
+# 2. Provision outdir & args.gn inside worktree
+echo "Provisioning GN outdir out/$OUTDIR_REL in worktree..."
+mkdir -p "$WT_PATH/out/$OUTDIR_REL"
+cp "$PARENT_OUTDIR/args.gn" "$WT_PATH/out/$OUTDIR_REL/args.gn"
+# Also mock .fx-build-dir
+echo "out/$OUTDIR_REL" > "$WT_PATH/.fx-build-dir"
 
-# 2. Benchmark 'lease' (with sync)
+# 3. Mark the worktree free
+echo "Marking worktree $WT_NAME as free..."
+$FX_WORKTREE_BIN mark-free "$WT_NAME" >/dev/null
+
+# 4. Benchmark 'lease' (with sync)
 echo -e "\n--- Running 'lease (with sync)' benchmark ---"
-# We lease by config, it should reuse the one we just created
-measure_time "fx-worktree lease (sync=true)" $FX_WORKTREE_BIN lease "$CONFIG" --sync --print-path-only >/dev/null
-
-# 3. Benchmark 'sync' (no-op)
-echo -e "\n--- Running 'sync (no-op)' benchmark ---"
-measure_time "fx-worktree sync (no-op)" $FX_WORKTREE_BIN sync "$WT_ID"
-
+measure_time "fx-worktree lease (sync=true)" $FX_WORKTREE_BIN lease "$WT_NAME" --sync --print-path-only >/dev/null
 
 # 5. Benchmark 'release'
 echo -e "\n--- Running 'release' benchmark ---"
-measure_time "fx-worktree release" $FX_WORKTREE_BIN release "$WT_ID"
+measure_time "fx-worktree release" $FX_WORKTREE_BIN release "$WT_NAME"
 
 # 6. Benchmark 'lease' (no sync)
 echo -e "\n--- Running 'lease (no sync)' benchmark ---"
-measure_time "fx-worktree lease (sync=false)" $FX_WORKTREE_BIN lease "$CONFIG" --print-path-only >/dev/null
+measure_time "fx-worktree lease (sync=false)" $FX_WORKTREE_BIN lease "$WT_NAME" --print-path-only >/dev/null
 
 # Release again before remove
-$FX_WORKTREE_BIN release "$WT_ID" >/dev/null
+$FX_WORKTREE_BIN release "$WT_NAME" >/dev/null
 
-# 7. Benchmark 'remove'
-echo -e "\n--- Running 'remove' benchmark ---"
-measure_time "fx-worktree remove" $FX_WORKTREE_BIN remove "$WT_ID"
+# 7. Benchmark 'jiri worktree remove'
+echo -e "\n--- Running 'jiri worktree remove' benchmark ---"
+measure_time "jiri worktree remove" run_jiri worktree remove -force "$WT_PATH"
 
-# Clear WT_ID so cleanup trap doesn't try to remove it again
-WT_ID=""
+# Clear WT_PATH so cleanup trap doesn't try to remove it again
+WT_PATH=""
 
 echo -e "\n${GREEN}Benchmark completed successfully.${NC}"

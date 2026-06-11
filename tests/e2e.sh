@@ -8,6 +8,8 @@
 
 set -e
 
+ORIG_FUCHSIA_DIR="${FUCHSIA_DIR:-}"
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -15,7 +17,7 @@ NC='\033[0m' # No Color
 
 # Setup temp directory
 TEST_DIR=$(mktemp -d -t fx-worktree-uber-e2e-XXXXXX)
-LOG_FILE="/tmp/uber_e2e.log"
+LOG_FILE="${FX_WORKTREE_E2E_LOG:-/tmp/uber_e2e.log}"
 rm -f "$LOG_FILE"
 
 # Redirect stdout and stderr to both console and log file
@@ -72,47 +74,36 @@ else
     echo "Running in MOCK MODE"
 fi
 
-# Helper to run Jiri update and preserve GN patch in Real Mode
+if [ "$REAL_MODE" = "true" ]; then
+    echo "========================================================================"
+    echo "[Safety Pre-check] Running E2E Test in MOCK MODE first..."
+    echo "========================================================================"
+    
+    if ! FX_WORKTREE_E2E_LOG="/tmp/uber_e2e_mock.log" "$0"; then
+        echo -e "${RED}Error: Safety pre-check (Mock Mode E2E) failed!${NC}"
+        echo -e "${RED}Aborting Real Mode execution to prevent damage to real workspace.${NC}"
+        echo -e "${RED}Review mock log at: /tmp/uber_e2e_mock.log${NC}"
+        exit 1
+    fi
+    
+    echo "========================================================================"
+    echo "[Safety Pre-check] Mock Mode E2E PASSED. Proceeding to Real Mode..."
+    echo "========================================================================"
+fi
+
+# Helper to run Jiri update
 run_jiri_update() {
     local jiri_bin="$1"
     shift
     echo "[Progress] Running Jiri update using $jiri_bin..."
-    if [ "$REAL_MODE" = "true" ] && [ -n "$INSTALL_BASE_COMMIT" ]; then
-        echo "[Progress] Temporarily resetting install_base commit before update..."
-        (
-            cd "$REAL_FUCHSIA_DIR"
-            git reset --hard
-            git checkout "$INSTALL_BASE_COMMIT~1"
-        )
-    fi
     "$jiri_bin" update "$@"
-    if [ "$REAL_MODE" = "true" ]; then
-        if [ -n "$CUSTOM_GN_PATH" ]; then
-            echo "[Progress] Injecting custom GN from $CUSTOM_GN_PATH..."
-            rm -f "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
-            cp "$CUSTOM_GN_PATH" "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
-        fi
-        if [ -n "$CUSTOM_SHAC_PATH" ]; then
-            echo "[Progress] Injecting custom SHAC from $CUSTOM_SHAC_PATH..."
-            rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-            cp "$CUSTOM_SHAC_PATH" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-        fi
-        if [ -n "$INSTALL_BASE_COMMIT" ]; then
-            echo "[Progress] Cherry-picking install_base commit after update..."
-            (
-                cd "$REAL_FUCHSIA_DIR"
-                git checkout JIRI_HEAD
-                git -c user.name="E2E Test" -c user.email="e2e@test.com" cherry-pick "$INSTALL_BASE_COMMIT"
-            )
-        fi
 
-        echo "DEBUG TIMESTAMPS after run_jiri_update:"
-        stat -c "  %y %n" build/regenerator.py || true
-        if [ -d "out" ]; then
-            local build_dir=$(scripts/fx get-build-dir 2>/dev/null || true)
-            if [ -n "$build_dir" ] && [ -f "$build_dir/build.ninja.stamp" ]; then
-                stat -c "  %y %n" "$build_dir/build.ninja.stamp" || true
-            fi
+    echo "DEBUG TIMESTAMPS after run_jiri_update:"
+    stat -c "  %y %n" build/regenerator.py || true
+    if [ -d "out" ]; then
+        local build_dir=$(scripts/fx get-build-dir 2>/dev/null || true)
+        if [ -n "$build_dir" ] && [ -f "$build_dir/build.ninja.stamp" ]; then
+            stat -c "  %y %n" "$build_dir/build.ninja.stamp" || true
         fi
     fi
 }
@@ -123,66 +114,10 @@ cleanup() {
     echo "========================================================================"
     if [ $exit_code -eq 0 ]; then
         echo -e "${GREEN}Uber E2E Test PASSED!${NC}"
-        if [ "$REAL_MODE" = "true" ]; then
-            echo "Installing latest compiled Jiri to host..."
-            rm -f "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
-            cp "$TEST_DIR/new_jiri" "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
-            rm -f "$HOME/go/bin/jiri"
-            mkdir -p "$HOME/go/bin"
-            cp "$TEST_DIR/new_jiri" "$HOME/go/bin/jiri"
-            echo "✔ New Jiri installed to $REAL_FUCHSIA_DIR/.jiri_root/bin/jiri and $HOME/go/bin/jiri"
-            
-            # Restore original config even on success to leave workspace clean
-            if [ -f "$TEST_DIR/backup_config" ]; then
-                echo "Restoring original config to $REAL_FUCHSIA_DIR..."
-                cp "$TEST_DIR/backup_config" "$REAL_FUCHSIA_DIR/.jiri_root/config"
-            fi
-            if [ -f "$TEST_DIR/orig_head" ]; then
-                ORIG_HEAD=$(cat "$TEST_DIR/orig_head")
-                echo "Resetting repository to $ORIG_HEAD..."
-                git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
-            fi
-            if [ -f "$TEST_DIR/backup_gn" ]; then
-                echo "Restoring original GN..."
-                rm -f "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
-                cp "$TEST_DIR/backup_gn" "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
-            fi
-            if [ -f "$TEST_DIR/backup_shac" ]; then
-                echo "Restoring original SHAC..."
-                rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-                cp "$TEST_DIR/backup_shac" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-            fi
-        fi
         echo "Cleaning up $TEST_DIR..."
         rm -rf "$TEST_DIR"
     else
         echo -e "${RED}Uber E2E Test FAILED!${NC}"
-        if [ "$REAL_MODE" = "true" ]; then
-            if [ -f "$TEST_DIR/orig_head" ]; then
-                ORIG_HEAD=$(cat "$TEST_DIR/orig_head")
-                echo "Resetting repository to $ORIG_HEAD..."
-                git -C "$REAL_FUCHSIA_DIR" reset "$ORIG_HEAD"
-            fi
-            if [ -f "$TEST_DIR/backup_jiri" ]; then
-                echo "Restoring original Jiri to $REAL_FUCHSIA_DIR..."
-                rm -f "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
-                cp "$TEST_DIR/backup_jiri" "$REAL_FUCHSIA_DIR/.jiri_root/bin/jiri"
-            fi
-            if [ -f "$TEST_DIR/backup_config" ]; then
-                echo "Restoring original config to $REAL_FUCHSIA_DIR..."
-                cp "$TEST_DIR/backup_config" "$REAL_FUCHSIA_DIR/.jiri_root/config"
-            fi
-            if [ -f "$TEST_DIR/backup_gn" ]; then
-                echo "Restoring original GN..."
-                rm -f "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
-                cp "$TEST_DIR/backup_gn" "$REAL_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
-            fi
-            if [ -f "$TEST_DIR/backup_shac" ]; then
-                echo "Restoring original SHAC..."
-                rm -f "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-                cp "$TEST_DIR/backup_shac" "$REAL_FUCHSIA_DIR/prebuilt/tools/shac/shac"
-            fi
-        fi
         echo "Keeping $TEST_DIR for debugging."
         echo "Review the log file at: $LOG_FILE"
     fi
@@ -192,8 +127,7 @@ trap cleanup EXIT
 
 # Export env vars for fx-worktree
 export FUCHSIA_DIR="$TEST_ROOT"
-export FX_WORKTREE_ROOT="$TEST_DIR/.fx_worktree_root"
-mkdir -p "$FX_WORKTREE_ROOT"
+
 
 # Safety checks for Real Mode
 if [ "$REAL_MODE" = "true" ]; then
@@ -209,31 +143,6 @@ if [ "$REAL_MODE" = "true" ]; then
         echo "$JIRI_STATUS"
         exit 1
     fi
-    # Backup original Jiri and config
-    cp .jiri_root/bin/jiri "$TEST_DIR/backup_jiri"
-    if [ -f .jiri_root/config ]; then
-        cp .jiri_root/config "$TEST_DIR/backup_config"
-    fi
-    if [ -n "$CUSTOM_GN_PATH" ] && [ -f prebuilt/third_party/gn/linux-x64/gn ]; then
-        cp prebuilt/third_party/gn/linux-x64/gn "$TEST_DIR/backup_gn"
-    fi
-    if [ -n "$CUSTOM_SHAC_PATH" ] && [ -f prebuilt/tools/shac/shac ]; then
-        cp prebuilt/tools/shac/shac "$TEST_DIR/backup_shac"
-    fi
-
-    # Capture original HEAD
-    ORIG_HEAD=$(git rev-parse HEAD)
-    echo "$ORIG_HEAD" > "$TEST_DIR/orig_head"
-
-    # Find the install_base commit
-    INSTALL_BASE_COMMIT=$(git log --grep="\[build\]\[bazel\] Move install_base under parent outdir" --format="%H" -n 1 || true)
-    if [ -n "$INSTALL_BASE_COMMIT" ]; then
-        echo "Found install_base commit: $INSTALL_BASE_COMMIT"
-    else
-        echo "WARNING: Could not find install_base commit in log!"
-    fi
-
-
 fi
 
 # Build fx-worktree
@@ -257,12 +166,22 @@ if [ "$REAL_MODE" = "false" ]; then
     git config user.email "test@example.com"
 
     cat << 'EOF' > BUILD.gn
+resolved_git_files = exec_script(
+    "//build/git/resolve_git_path.py",
+    [
+      rebase_path(".", root_build_dir),
+      "index",
+    ],
+    "list lines"
+)
+git_index = resolved_git_files[0]
+
 action("sim_link") {
   script = "link_tool.py"
   sources = [
     "source.txt",
     "//prebuilt/tools/gsutil/gsutil",
-    "//.git/index",
+    git_index,
   ]
   outputs = [ "$root_out_dir/gen/link.txt" ]
   args = [
@@ -385,6 +304,53 @@ toolchain("dummy") {
 }
 EOF
 
+    mkdir -p build/git
+    cat << 'EOF' > build/git/resolve_git_path.py
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+def main():
+    repo_dir = Path(sys.argv[1])
+    file_path = sys.argv[2]
+    
+    git_path = repo_dir / ".git"
+    if git_path.is_dir():
+        git_dir = git_path
+    elif git_path.is_file():
+        content = git_path.read_text().strip()
+        if content.startswith("gitdir: "):
+            git_dir = Path(content[8:])
+            if not git_dir.is_absolute():
+                git_dir = (repo_dir / git_dir).resolve()
+        else:
+            print(f"Invalid .git file: {content}", file=sys.stderr)
+            return 1
+    else:
+        print(f".git not found in {repo_dir}", file=sys.stderr)
+        return 1
+        
+    worktree_specific = ["HEAD", "index", "ORIG_HEAD"]
+    is_shared = file_path not in worktree_specific
+    
+    if is_shared:
+        commondir_file = git_dir / "commondir"
+        if commondir_file.exists():
+            commondir_path = commondir_file.read_text().strip()
+            target_dir = (git_dir / commondir_path).resolve()
+        else:
+            target_dir = git_dir
+    else:
+        target_dir = git_dir
+        
+    print(target_dir / file_path)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOF
+    chmod +x build/git/resolve_git_path.py
+
     cat << 'EOF' > BUILD.gn
 import("//build/cipd.gni")
 copy("check_jiri") {
@@ -400,12 +366,41 @@ group("all") {
 EOF
 
     # Mock fx script
-    GN_BIN="/usr/local/google/home/awolter/fuchsia/prebuilt/third_party/gn/linux-x64/gn"
-    NINJA_BIN="/usr/bin/ninja"
+    GN_BIN=""
+    if [ -n "$ORIG_FUCHSIA_DIR" -a -f "$ORIG_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn" ]; then
+        GN_BIN="$ORIG_FUCHSIA_DIR/prebuilt/third_party/gn/linux-x64/gn"
+    elif which gn >/dev/null 2>&1; then
+        GN_BIN=$(which gn)
+    fi
+
+    if [ -z "$GN_BIN" ]; then
+        echo -e "${RED}Error: gn binary not found. Please set FUCHSIA_DIR or add gn to your PATH.${NC}"
+        exit 1
+    fi
+
+    NINJA_BIN=""
+    if [ -n "$ORIG_FUCHSIA_DIR" -a -f "$ORIG_FUCHSIA_DIR/prebuilt/third_party/ninja/linux-x64/ninja" ]; then
+        NINJA_BIN="$ORIG_FUCHSIA_DIR/prebuilt/third_party/ninja/linux-x64/ninja"
+    elif which ninja >/dev/null 2>&1; then
+        NINJA_BIN=$(which ninja)
+    fi
+
+    if [ -z "$NINJA_BIN" ]; then
+        echo -e "${RED}Error: ninja binary not found. Please set FUCHSIA_DIR or add ninja to your PATH.${NC}"
+        exit 1
+    fi
+
     mkdir -p scripts
     cat << EOF > scripts/fx
 #!/bin/bash
-dir="out/default"
+dir=""
+if [ -f ".fx-build-dir" ]; then
+  dir=\$(cat .fx-build-dir)
+fi
+if [ -z "\$dir" ]; then
+  dir="out/default"
+fi
+
 while [[ "\$#" -gt 0 ]]; do
     case \$1 in
         --dir) dir="\$2"; shift ;;
@@ -462,63 +457,52 @@ check_noop() {
     echo "✔ Build is no-op."
 }
 
+print_git_mtimes() {
+    local label="$1"
+    local wt_path="$2"
+    echo "--- GIT MTIMES: $label ---"
+    stat -c "  Parent index: %y" "$TEST_ROOT/.git/index" || true
+    stat -c "  Parent HEAD:  %y" "$TEST_ROOT/.git/HEAD" || true
+    if [ -n "$wt_path" -a -d "$wt_path" ]; then
+        if [ -f "$wt_path/.git" ]; then
+            local gitdir=$(git -C "$wt_path" rev-parse --git-dir 2>/dev/null)
+            if [ -n "$gitdir" ]; then
+                stat -c "  WT index:     %y" "$gitdir/index" || true
+                stat -c "  WT HEAD:      %y" "$gitdir/HEAD" || true
+            fi
+        fi
+    fi
+    echo "--------------------------"
+}
+
+
 # ==============================================================================
-# 2. Setup Old Jiri
+# ==============================================================================
+# 2. Setup Jiri and Initial Build
 # ==============================================================================
 if [ "$REAL_MODE" = "false" ]; then
-    echo "[Progress] Bootstrapping official (old) Jiri..."
+    echo "[Progress] Bootstrapping official Jiri..."
     mkdir -p "$TEST_ROOT"
     cd "$TEST_ROOT"
     curl -s "https://fuchsia.googlesource.com/jiri/+/HEAD/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s .
-    OLD_JIRI="$TEST_ROOT/.jiri_root/bin/jiri"
+    JIRI_BIN="$TEST_ROOT/.jiri_root/bin/jiri"
 
-    echo "[Progress] Initializing Jiri root with old Jiri..."
-    "$OLD_JIRI" init -shared=true -enable-lockfile=false -analytics-opt=false .
-    "$OLD_JIRI" import minimal.xml "$MANIFEST_REPO"
-    run_jiri_update "$OLD_JIRI"
+    echo "[Progress] Initializing Jiri root..."
+    "$JIRI_BIN" init -shared=true -enable-lockfile=false -analytics-opt=false .
+    "$JIRI_BIN" import minimal.xml "$MANIFEST_REPO"
+    run_jiri_update "$JIRI_BIN"
 
-    # Initial build with old Jiri
-    echo "[Progress] Running initial build with old Jiri..."
+    # Initial build
+    echo "[Progress] Running initial build..."
     scripts/fx set "$CONFIG_NAME"
     scripts/fx build
 else
-    echo "[Progress] Compiling temporary new Jiri to restore symlinks..."
-    NEW_JIRI_SRC="/usr/local/google/home/awolter/src/jiri"
-    (cd "$NEW_JIRI_SRC" && go build -o "$TEST_DIR/pre_cleanup_jiri" ./cmd/jiri)
-    
-    echo "[Progress] Restoring cache symlinks to real directories..."
-    "$TEST_DIR/pre_cleanup_jiri" init -package-cache=false
-    "$TEST_DIR/pre_cleanup_jiri" update
-
-    echo "[Progress] Restoring official (old) Jiri to real repo..."
-    cd "$TEST_ROOT"
-    # Download and overwrite with official Jiri
-    curl -s "https://fuchsia.googlesource.com/jiri/+/HEAD/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s .
-    # Make sure cache is disabled initially
-    if [ -f .jiri_root/config ]; then
-        sed -i 's/<enabled>true<\/enabled>/<enabled>false<\/enabled>/g' .jiri_root/config
-    fi
-    run_jiri_update ./.jiri_root/bin/jiri
-    
-    echo "[Progress] Running initial build with old Jiri..."
+    JIRI_BIN="$TEST_ROOT/.jiri_root/bin/jiri"
+    echo "[Progress] Running initial build..."
     scripts/fx set "$CONFIG_NAME"
     scripts/fx build
 fi
 
-# ==============================================================================
-# 3. Inject New Jiri
-# ==============================================================================
-echo "[Progress] Compiling and injecting new Jiri..."
-NEW_JIRI_SRC="/usr/local/google/home/awolter/src/jiri"
-(cd "$NEW_JIRI_SRC" && go build -o "$TEST_DIR/new_jiri" ./cmd/jiri)
-cp "$TEST_DIR/new_jiri" "$TEST_ROOT/.jiri_root/bin/jiri"
-JIRI_BIN="./.jiri_root/bin/jiri"
-
-echo "[Progress] Verifying Jiri update with new Jiri..."
-    run_jiri_update "$JIRI_BIN"
-
-# Verify build still works and is no-op
-scripts/fx build
 check_noop "$TEST_ROOT"
 
 # ==============================================================================
@@ -605,7 +589,9 @@ cd "$TEST_ROOT"
 config_mtime_before=$(stat -c %Y .git/config)
 index_mtime_before=$(stat -c %Y .git/index)
 
-$FX_WORKTREE_BIN add "$CONFIG_NAME"
+"$JIRI_BIN" worktree add "$TEST_ROOT/.jiri_root/worktrees/$CONFIG_NAME"
+(cd "$TEST_ROOT/.jiri_root/worktrees/$CONFIG_NAME" && scripts/fx set "$CONFIG_NAME")
+$FX_WORKTREE_BIN mark-free "$CONFIG_NAME"
 
 # Check if parent .git/config or .git/index mtime changed
 config_mtime_after=$(stat -c %Y .git/config)
@@ -625,7 +611,8 @@ fi
 check_noop "$TEST_ROOT"
 
 echo "[Progress] Leasing worktree..."
-WT_PATH=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --print-path-only)
+AGENT_ID="e2e-test-agent"
+WT_PATH=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --agent-id "$AGENT_ID" --print-path-only)
 WT_ID=$(basename "$WT_PATH")
 echo "Leased worktree $WT_ID at $WT_PATH"
 
@@ -659,8 +646,13 @@ scripts/fx build
 check_noop "$WT_PATH"
 
 echo "[Progress] Testing release and re-lease..."
+print_git_mtimes "BEFORE RELEASE" "$WT_PATH"
 $FX_WORKTREE_BIN release "$WT_ID"
-WT_PATH2=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --print-path-only)
+print_git_mtimes "AFTER RELEASE" "$WT_PATH"
+
+print_git_mtimes "BEFORE LEASE" "$WT_PATH"
+WT_PATH2=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --agent-id "$AGENT_ID" --print-path-only)
+print_git_mtimes "AFTER LEASE" "$WT_PATH"
 if [ "$WT_PATH" != "$WT_PATH2" ]; then
     echo -e "${RED}FAIL: Leased a different worktree path: $WT_PATH2 (expected $WT_PATH)${NC}"
     exit 1
@@ -673,7 +665,7 @@ cd "$TEST_ROOT"
 run_jiri_update "$JIRI_BIN"
 
 echo "[Progress] Syncing worktree..."
-$FX_WORKTREE_BIN sync "$WT_ID"
+(cd "$WT_PATH" && "$JIRI_BIN" update)
 cd "$WT_PATH"
 scripts/fx build
 check_noop "$WT_PATH"
@@ -690,7 +682,7 @@ scripts/fx build
 check_noop "$TEST_ROOT"
 
 echo "[Progress] Syncing worktree (migration)..."
-$FX_WORKTREE_BIN sync "$WT_ID"
+(cd "$WT_PATH" && "$JIRI_BIN" update)
 cd "$WT_PATH"
 scripts/fx build
 check_noop "$WT_PATH"
@@ -700,10 +692,12 @@ check_noop "$WT_PATH"
 # ==============================================================================
 echo "[Progress] Adding second worktree (cache on)..."
 cd "$TEST_ROOT"
-$FX_WORKTREE_BIN add "$CONFIG_NAME"
+"$JIRI_BIN" worktree add "$TEST_ROOT/.jiri_root/worktrees/${CONFIG_NAME}_2"
+(cd "$TEST_ROOT/.jiri_root/worktrees/${CONFIG_NAME}_2" && scripts/fx set "$CONFIG_NAME")
+$FX_WORKTREE_BIN mark-free "${CONFIG_NAME}_2"
 
 echo "[Progress] Leasing second worktree..."
-WT_PATH_NEW=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --print-path-only)
+WT_PATH_NEW=$($FX_WORKTREE_BIN lease --any --print-path-only)
 WT_ID_NEW=$(basename "$WT_PATH_NEW")
 if [ "$WT_PATH" = "$WT_PATH_NEW" ]; then
     echo -e "${RED}FAIL: Leased the same worktree, expected a new one${NC}"
@@ -717,12 +711,130 @@ scripts/fx build
 check_noop "$WT_PATH_NEW"
 
 # ==============================================================================
-# 8. Cleanup
+# 8. Test GC Safety with Active Worktrees
+# ==============================================================================
+echo "[Progress] Testing GC safety with active worktrees..."
+
+# Ensure WT_ID is synced and clean
+cd "$TEST_ROOT"
+(cd "$WT_PATH" && "$JIRI_BIN" update)
+
+# Verify source_repo2 exists in both parent and worktrees before test
+if [ ! -d "$TEST_ROOT/source_repo2" ]; then
+    echo -e "${RED}FAIL: source_repo2 does not exist in parent before test${NC}"
+    exit 1
+fi
+if [ ! -d "$WT_PATH/source_repo2" ]; then
+    echo -e "${RED}FAIL: source_repo2 does not exist in worktree WT_ID before test${NC}"
+    exit 1
+fi
+if [ ! -d "$WT_PATH_NEW/source_repo2" ]; then
+    echo -e "${RED}FAIL: source_repo2 does not exist in worktree WT_ID_NEW before test${NC}"
+    exit 1
+fi
+
+# 1. Modify manifest to delete source_repo2
+echo "[Progress] Deleting source_repo2 from manifest..."
+cd "$MANIFEST_REPO"
+python3 -c "
+with open('minimal.xml', 'r') as f:
+    lines = f.readlines()
+new_lines = []
+skip = False
+for line in lines:
+    if 'name=\"source_repo2\"' in line:
+        skip = True
+        continue
+    if skip:
+        if '/>' in line:
+            skip = False
+        continue
+    new_lines.append(line)
+with open('minimal.xml', 'w') as f:
+    f.writelines(new_lines)
+"
+git commit -a -m "Delete source_repo2 from manifest" -q
+
+# 2. Run Jiri update with GC in main tree.
+# It should NOT delete source_repo2 in main tree because worktrees still reference it.
+echo "[Progress] Running Jiri update -gc in main tree..."
+cd "$TEST_ROOT"
+run_jiri_update "$JIRI_BIN" -gc
+
+# Verify source_repo2 STILL exists in parent because of active worktrees
+if [ ! -d "$TEST_ROOT/source_repo2" ]; then
+    echo -e "${RED}FAIL: source_repo2 was deleted in parent despite active worktrees!${NC}"
+    exit 1
+else
+    echo "✔ source_repo2 was preserved in parent (GC safety check worked)."
+fi
+
+# 3. Sync worktree WT_ID.
+# Jiri in worktree should see source_repo2 is deleted from manifest, and should delete it in worktree.
+echo "[Progress] Syncing worktree WT_ID to apply manifest deletion..."
+(cd "$WT_PATH" && "$JIRI_BIN" update -gc)
+
+# Verify source_repo2 is deleted in worktree WT_ID
+if [ -d "$WT_PATH/source_repo2" ]; then
+    echo -e "${RED}FAIL: source_repo2 was not deleted in worktree WT_ID after sync!${NC}"
+    exit 1
+else
+    echo "✔ source_repo2 was deleted in worktree WT_ID."
+fi
+
+# 4. Sync second worktree WT_ID_NEW as well.
+echo "[Progress] Syncing second worktree WT_ID_NEW to apply manifest deletion..."
+(cd "$WT_PATH_NEW" && "$JIRI_BIN" update -gc)
+
+# Verify source_repo2 is deleted in second worktree
+if [ -d "$WT_PATH_NEW/source_repo2" ]; then
+    echo -e "${RED}FAIL: source_repo2 was not deleted in worktree WT_ID_NEW after sync!${NC}"
+    exit 1
+else
+    echo "✔ source_repo2 was deleted in worktree WT_ID_NEW."
+fi
+
+# 5. Run Jiri update -gc in parent again.
+# Since both worktrees have deleted their source_repo2 directories,
+# the parent project should now be deleted (if prune works).
+echo "[Progress] Running Jiri update -gc in main tree again..."
+cd "$TEST_ROOT"
+run_jiri_update "$JIRI_BIN" -gc
+
+# Verify source_repo2 is now deleted in parent
+if [ -d "$TEST_ROOT/source_repo2" ]; then
+    echo -e "${RED}WARNING: source_repo2 still exists in parent. Trying with manual prune...${NC}"
+    if [ -d "$TEST_ROOT/source_repo2/.git" ]; then
+        git -C "$TEST_ROOT/source_repo2" worktree prune
+        run_jiri_update "$JIRI_BIN" -gc
+        if [ -d "$TEST_ROOT/source_repo2" ]; then
+             echo -e "${RED}FAIL: source_repo2 still exists in parent even after manual prune!${NC}"
+             exit 1
+        else
+             echo "✔ source_repo2 was deleted in parent after manual prune."
+             echo -e "${RED}FAIL: Jiri did not auto-prune worktrees, manual prune was required.${NC}"
+             exit 1
+        fi
+    else
+        echo -e "${RED}FAIL: source_repo2 still exists but has no .git?${NC}"
+        exit 1
+    fi
+else
+    echo "✔ source_repo2 was deleted in parent (GC cleanup worked)."
+fi
+
+# Restore manifest for subsequent runs (just in case)
+cd "$MANIFEST_REPO"
+git reset --hard HEAD~1 -q
+
+# ==============================================================================
+# 9. Cleanup
 # ==============================================================================
 echo "[Progress] Releasing and removing test worktrees..."
+cd "$TEST_ROOT"
 $FX_WORKTREE_BIN release "$WT_ID"
 $FX_WORKTREE_BIN release "$WT_ID_NEW"
-$FX_WORKTREE_BIN remove "$WT_ID" --force
-$FX_WORKTREE_BIN remove "$WT_ID_NEW" --force
+"$JIRI_BIN" worktree remove -force "$WT_PATH"
+"$JIRI_BIN" worktree remove -force "$WT_PATH_NEW"
 
 # The EXIT trap will handle restoring Jiri if failed, or installing new Jiri on success.

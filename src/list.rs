@@ -1,110 +1,154 @@
+// Copyright 2026 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! Scanning and pretty printing of Jiri worktrees.
+
 use anyhow::{Context, Result};
-use std::collections::BTreeMap;
 use std::fs;
 
 use crate::colors::Colors;
 use crate::config::Config;
-use crate::environment::EnvironmentInfo;
+use crate::worktree::WorktreeInfo;
 
 #[derive(serde::Serialize)]
 struct WorktreeListEntry {
-    config: String,
-    worktree_id: String,
+    name: String,
+    path: String,
     status: String,
+    outdirs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_id: Option<String>,
 }
 
-pub fn list_environments(config: &Config, json: bool) -> Result<()> {
+/// Scans the Jiri worktrees registry and prints a tabular tree representation of all
+/// worktrees, their lease statuses, and their configured GN outdirs.
+///
+/// If `json` is true, prints structured JSON representing the worktrees instead.
+pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
     let colors = Colors::new();
-    let leases_dir = config.leases_dir();
-    let envs_dir = config.environments_dir();
 
-    // 1. Collect all active leases
-    let mut active_leases = BTreeMap::new(); // env_id -> agent_id
-    if leases_dir.exists() {
-        let entries = fs::read_dir(&leases_dir)?;
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lease") {
-                if let Some(env_info) = fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|content| serde_json::from_str::<EnvironmentInfo>(&content).ok())
-                {
-                    active_leases.insert(env_info.environment_id.clone(), env_info.agent_id);
+    // Scan Jiri worktrees
+    let mut wt_entries = Vec::new();
+    let worktree_paths = crate::worktree::read_jiri_worktrees(config)?;
+    for path in worktree_paths {
+        if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+            // Find all outdirs in this worktree
+            let outdir_paths = crate::fuchsia::find_outdirs(&path).unwrap_or_else(|e| {
+                log::warn!("Failed to find outdirs for {:?}: {:?}", path, e);
+                Vec::new()
+            });
+
+            let mut outdirs_info = Vec::new();
+            for op in outdir_paths {
+                let rel_path = op
+                    .strip_prefix(&path)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| op.to_string_lossy().into_owned());
+
+                let config_info = if let Ok(cfg) = crate::fuchsia::get_config_name_for_outdir(&op) {
+                    format!("{} ({})", rel_path, cfg)
+                } else {
+                    rel_path
+                };
+                outdirs_info.push(config_info);
+            }
+
+            // Check lease
+            let lease_file_path = path.join(".jiri_root").join("lease.json");
+            let mut agent_id = None;
+            let mut is_leased = false;
+            if lease_file_path.is_file() {
+                if let Ok(content) = fs::read_to_string(&lease_file_path) {
+                    if let Ok(wt_info) = serde_json::from_str::<WorktreeInfo>(&content) {
+                        agent_id = wt_info.agent_id;
+                        is_leased = true;
+                    }
                 }
             }
-        }
-    }
 
-    // 2. Scan environments pool
-    let mut env_entries = Vec::new();
-    if envs_dir.exists() {
-        let entries = fs::read_dir(&envs_dir)
-            .with_context(|| format!("Failed to read environments directory {:?}", envs_dir))?;
-
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    let config_name = crate::utils::get_config_name(&path).unwrap_or_else(|e| {
-                        log::warn!("Failed to get config name for {:?}: {:?}", path, e);
-                        "unknown".to_string()
-                    });
-
-                    let agent_id = active_leases.get(dir_name).cloned();
-                    let status = if agent_id.is_some() {
-                        "In Use".to_string()
-                    } else {
-                        "Free".to_string()
-                    };
-
-                    env_entries.push(WorktreeListEntry {
-                        config: config_name,
-                        worktree_id: dir_name.to_string(),
-                        status,
-                        agent_id,
-                    });
+            let state = crate::worktree::get_worktree_state(config, &path);
+            let status = if is_leased {
+                if let Some(agent) = &agent_id {
+                    format!("In Use ({})", agent)
+                } else {
+                    "In Use".to_string()
                 }
-            }
+            } else {
+                match state {
+                    crate::worktree::WorktreeState::Free => "Free".to_string(),
+                    crate::worktree::WorktreeState::Reserved => "Reserved".to_string(),
+                }
+            };
+
+            wt_entries.push(WorktreeListEntry {
+                name: dir_name.to_string(),
+                path: path.to_string_lossy().into_owned(),
+                status,
+                outdirs: outdirs_info,
+                agent_id,
+            });
         }
     }
 
     if json {
-        let json_str = serde_json::to_string_pretty(&env_entries)
-            .context("Failed to serialize environments list to JSON")?;
+        let json_str = serde_json::to_string_pretty(&wt_entries)
+            .context("Failed to serialize worktrees list to JSON")?;
         println!("{}", json_str);
         return Ok(());
     }
 
-    if env_entries.is_empty() {
-        println!("No worktrees found in pool.");
+    if wt_entries.is_empty() {
+        println!("No worktrees found.");
         return Ok(());
     }
 
-    // 3. Print pretty table
-    let mut max_config = 6; // "CONFIG".len()
-    let mut max_id = 11; // "WORKTREE ID".len()
-    for entry in &env_entries {
-        max_config = max_config.max(entry.config.len());
-        max_id = max_id.max(entry.worktree_id.len());
-    }
-
-    let header_cfg = colors.bold(&format!("{:<width$}", "CONFIG", width = max_config));
-    let header_id = colors.bold(&format!("{:<width$}", "WORKTREE ID", width = max_id));
-    let header_status = colors.bold("STATUS");
-    println!("{}   {}   {}", header_cfg, header_id, header_status);
-
-    for entry in &env_entries {
-        let status_str = match &entry.agent_id {
-            Some(agent) => colors.yellow(&format!("In Use ({})", agent)),
-            None => colors.green("Free"),
+    // Print pretty layout
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::new());
+    let mut formatted_paths = Vec::new();
+    let mut max_total_len = 0;
+    for entry in &wt_entries {
+        let path = std::path::Path::new(&entry.path);
+        let parent = path.parent().unwrap_or(std::path::Path::new(""));
+        let shortened_parent = crate::utils::shorten_path(parent, &cwd);
+        let sp_str = shortened_parent.to_string_lossy().into_owned();
+        let prefix = if sp_str.is_empty() || sp_str == "." {
+            "".to_string()
+        } else {
+            format!("{}/", sp_str)
         };
-        let cfg_str = colors.blue(&format!("{:<width$}", entry.config, width = max_config));
-        let id_str = colors.blue(&format!("{:<width$}", entry.worktree_id, width = max_id));
-        println!("{}   {}   {}", cfg_str, id_str, status_str);
+        max_total_len = max_total_len.max(prefix.len() + entry.name.len());
+        formatted_paths.push((prefix, entry.name.clone()));
+    }
+    let align_width = max_total_len + 4;
+
+    for (idx, entry) in wt_entries.iter().enumerate() {
+        let status_str = if entry.status.starts_with("In Use") {
+            colors.yellow(&entry.status)
+        } else if entry.status == "Reserved" {
+            colors.magenta("Reserved")
+        } else {
+            colors.green("Free")
+        };
+
+        let (prefix, name) = &formatted_paths[idx];
+        let total_len = prefix.len() + name.len();
+        let spaces_to_add = align_width.saturating_sub(total_len);
+        let spaces = " ".repeat(spaces_to_add);
+
+        let colored_name = colors.bold(&colors.blue(name));
+        let colored_prefix = colors.blue(prefix);
+
+        println!("{}{}{}{}", colored_prefix, colored_name, spaces, status_str);
+        let num_outdirs = entry.outdirs.len();
+        for (i, outdir) in entry.outdirs.iter().enumerate() {
+            let marker = if i == num_outdirs - 1 {
+                "└── "
+            } else {
+                "├── "
+            };
+            println!("{}{}", marker, outdir);
+        }
     }
 
     Ok(())

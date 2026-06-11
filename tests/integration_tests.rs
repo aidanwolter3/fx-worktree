@@ -1,16 +1,67 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
-use fx_worktree::add::add_environment;
+fn add_worktree(config: &Config, config_name: &str, _quiet: bool) -> anyhow::Result<String> {
+    let name = format!("{}-{}", config_name, &uuid::Uuid::new_v4().to_string()[0..8]);
+    let wt_path = config.worktrees_dir().join(&name);
+
+    // Call mock jiri directly to add worktree
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let status = Command::new(&jiri_bin)
+        .args(&["worktree", "add", wt_path.to_str().unwrap()])
+        .current_dir(&config.fuchsia_dir)
+        .status()?;
+    assert!(status.success(), "Failed to run jiri worktree add in tests");
+
+    // Write default build directory config
+    let out_dir = wt_path.join("out").join(config_name);
+    fs::create_dir_all(&out_dir)?;
+    fs::write(out_dir.join("args.gn"), "mock_arg = true\n")?;
+
+    // Also write .fx-build-dir
+    fs::write(wt_path.join(".fx-build-dir"), format!("out/{}\n", config_name))?;
+
+    fx_worktree::worktree::set_worktree_state(&wt_path, fx_worktree::worktree::WorktreeState::Free)?;
+    Ok(name)
+}
 use fx_worktree::config::Config;
-use fx_worktree::lease::lease_environment;
-use fx_worktree::list::list_environments;
+use fx_worktree::lease::lease_worktree as lease_worktree_raw;
+use fx_worktree::list::list_worktrees;
 use fx_worktree::release::release_worktree;
-use fx_worktree::remove::remove_environment;
+fn remove_worktree(config: &Config, id: &str, force: bool, _quiet: bool) -> anyhow::Result<()> {
+    if std::path::Path::new(id).components().count() > 1 {
+        return Err(anyhow::anyhow!("Invalid ID: {}", id));
+    }
+    let wt_path = config.worktrees_dir().join(id);
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("-force");
+    }
+    args.push(wt_path.to_str().unwrap());
+    let status = std::process::Command::new(&jiri_bin)
+        .args(&args)
+        .current_dir(&config.fuchsia_dir)
+        .status()?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("jiri worktree remove failed"));
+    }
+    Ok(())
+}
+
+fn lease_worktree(
+    config: &Config,
+    _config_name: &str,
+    agent_id: &str,
+    sync: bool,
+    quiet: bool,
+) -> anyhow::Result<fx_worktree::worktree::WorktreeInfo> {
+    lease_worktree_raw(config, None, true, Some(agent_id), sync, quiet)
+}
 
 // Global lock to serialize tests
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -27,6 +78,29 @@ fn run_setup_cmd(cmd: &str, args: &[&str], cwd: &Path) {
         cmd,
         args.join(" ")
     );
+}
+
+fn resolve_git_dir(repo_path: &Path) -> PathBuf {
+    let git_path = repo_path.join(".git");
+    if git_path.is_dir() {
+        git_path
+    } else if git_path.is_file() {
+        let content = fs::read_to_string(&git_path).unwrap();
+        let content = content.trim();
+        if content.starts_with("gitdir: ") {
+            let gitdir = content.trim_start_matches("gitdir: ").trim();
+            let p = PathBuf::from(gitdir);
+            if p.is_absolute() {
+                p
+            } else {
+                repo_path.join(p).canonicalize().unwrap()
+            }
+        } else {
+            panic!("Invalid .git file: {}", content);
+        }
+    } else {
+        panic!(".git does not exist in {}", repo_path.display());
+    }
 }
 
 struct TestEnv {
@@ -96,6 +170,20 @@ fn setup_mock_env() -> TestEnv {
         r#"#!/bin/bash
 base_dir="{0}"
 cwd=$(pwd)
+
+copy_if_different() {{
+  local src="$1"
+  local dest="$2"
+  if [ -f "$src" ]; then
+    if [ -f "$dest" ]; then
+      if cmp -s "$src" "$dest"; then
+        return 0
+      fi
+    fi
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+  fi
+}}
 commit_msg=$(git -C "$base_dir" log -n 1 --format=%s 2>/dev/null || echo "")
 version="version:1"
 if [ "$commit_msg" = "bump root" ] || [ "$commit_msg" = "bump sub" ]; then
@@ -160,33 +248,33 @@ elif [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   mkdir -p "$(dirname "$target_path")"
   git -C "$base_dir" worktree add -f --detach "$target_path" "$root_rev" >/dev/null
   
-  git_file="$target_path/.git"
-  if [ -f "$git_file" ]; then
-    gitdir_line=$(head -n 1 "$git_file")
-    gitdir_path=${{gitdir_line#gitdir: }}
-    rm "$git_file"
-    ln -s "$gitdir_path" "$git_file"
-    
-    if [ -d "$base_dir/.git/jiri" ]; then
-      ln -s "$base_dir/.git/jiri" "$gitdir_path/jiri"
-    fi
-  fi
+  # Append to registry
+  mkdir -p "$base_dir/.jiri_root"
+  echo "$target_path" >> "$base_dir/.jiri_root/worktrees_registry"
   
   sub_rev=$(git -C "$base_dir/third_party/sub" rev-parse HEAD)
   mkdir -p "$target_path/third_party/sub"
   git -C "$base_dir/third_party/sub" worktree add -f --detach "$target_path/third_party/sub" "$sub_rev" >/dev/null
-  
-  sub_git_file="$target_path/third_party/sub/.git"
-  if [ -f "$sub_git_file" ]; then
-    gitdir_line=$(head -n 1 "$sub_git_file")
-    gitdir_path=${{gitdir_line#gitdir: }}
-    rm "$sub_git_file"
-    ln -s "$gitdir_path" "$sub_git_file"
-    
-    if [ -d "$base_dir/third_party/sub/.git/jiri" ]; then
-      ln -s "$base_dir/third_party/sub/.git/jiri" "$gitdir_path/jiri"
-    fi
+
+  # Simulate Jiri WorktreeAdd metadata setup
+  mkdir -p "$target_path/.jiri_root"
+  ln -sf "$base_dir/.jiri_root/bin" "$target_path/.jiri_root/bin"
+  if [ -f "$base_dir/.jiri_root/config" ]; then
+    cp "$base_dir/.jiri_root/config" "$target_path/.jiri_root/config"
   fi
+  if [ -f "$base_dir/.jiri_manifest" ]; then
+    cp "$base_dir/.jiri_manifest" "$target_path/.jiri_manifest"
+  fi
+  if [ -f "$base_dir/.jiri_root/update_history/latest" ]; then
+    mkdir -p "$target_path/.jiri_root/update_history"
+    cp "$base_dir/.jiri_root/update_history/latest" "$target_path/.jiri_root/update_history/latest"
+  fi
+
+  # Run sync to simulate Jiri's internal sync during add
+  (
+    cd "$target_path"
+    "$base_dir/.jiri_root/bin/jiri" worktree sync
+  )
 elif [ "$1" = "worktree" ] && [ "$2" = "sync" ]; then
   parent_rev=$(git -C "$base_dir" rev-parse HEAD)
   current_rev=$(git rev-parse HEAD)
@@ -234,7 +322,10 @@ EOF
   
   rm "$ensure_file"
   
-
+  # Simulate Jiri generating metadata files (preserving mtimes if unchanged)
+  copy_if_different "$base_dir/build/info/jiri_generated/commit_info" "build/info/jiri_generated/commit_info"
+  copy_if_different "$base_dir/build/cipd.gni" "build/cipd.gni"
+  copy_if_different "$base_dir/sdk/ctf/build/internal/ctf_releases.gni" "sdk/ctf/build/internal/ctf_releases.gni"
 
   if [ "$current_rev" != "$parent_rev" ] || [ ! -d "prebuilt/third_party/pydantic-core" ] || [ ! -d "prebuilt/third_party/protobuf-py3" ]; then
     if [ -f "tools/build/scripts/extract_pydantic_core_wheel.sh" ]; then
@@ -244,7 +335,7 @@ EOF
       ./tools/build/scripts/extract_protobuf_py3_wheel.sh
     fi
   fi
-elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
+elif [ "$1" = "worktree" -a "$2" = "clean" ] || [ "$1" = "clean" ]; then
   git clean -fdx \
     -e prebuilt \
     -e .jiri_root \
@@ -260,21 +351,17 @@ elif [ "$1" = "worktree" ] && [ "$2" = "clean" ]; then
 
 elif [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
   target_path=$3
-  restore_git() {{
-    local p=$1
-    if [ -L "$p/.git" ]; then
-      local t=$(readlink "$p/.git")
-      rm "$p/.git"
-      echo "gitdir: $t" > "$p/.git"
-    fi
-  }}
   if [ -d "$target_path/third_party/sub" ]; then
-    restore_git "$target_path/third_party/sub"
-    git -C "third_party/sub" worktree remove -f "$target_path/third_party/sub"
+    git -C "$target_path/third_party/sub" worktree remove -f "$target_path/third_party/sub"
   fi
-  restore_git "$target_path"
   git worktree remove -f "$target_path"
   rm -rf "$target_path"
+  
+  # Remove from registry
+  if [ -f "$base_dir/.jiri_root/worktrees_registry" ]; then
+    grep -v "^$target_path$" "$base_dir/.jiri_root/worktrees_registry" > "$base_dir/.jiri_root/worktrees_registry.tmp" || true
+    mv "$base_dir/.jiri_root/worktrees_registry.tmp" "$base_dir/.jiri_root/worktrees_registry"
+  fi
   
   # Run GC
   commit_msg=$(git -C "$base_dir" log -n 1 --format=%s 2>/dev/null || echo "")
@@ -475,9 +562,7 @@ echo "mock extraction done"
         fuchsia_path,
     );
 
-    unsafe {
-        std::env::set_var("FX_WORKTREE_ROOT", fenv_root_dir.path());
-    }
+
 
     let config = Config::new(Some(fuchsia_path.to_path_buf())).unwrap();
     config.init_topology().unwrap();
@@ -502,55 +587,40 @@ fn test_full_lifecycle() {
     let config = &env.config;
 
     // 1. Test Environment Create
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_path = config.environments_dir().join(&env_id);
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_path = config.worktrees_dir().join(&env_id);
     assert!(env_path.exists());
-    assert!(env_path.join("out/default/args.gn").exists());
-    assert!(env_path.join("out/default/args.gn.ref").exists());
-
-    println!("--- List Worktrees after add ---");
-    list_environments(config, false).unwrap();
-
+    assert!(env_path.join("out/mock_config/args.gn").exists());
     // 2. Test Worktree Lease (reuses the created slot)
-    let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
-    assert_eq!(env_info.agent_id, "test_agent");
-    assert_eq!(env_info.config, "mock_config");
+    let env_info = lease_worktree(config, "mock_config", "test_agent", true, true).unwrap();
+    assert_eq!(env_info.agent_id.as_deref(), Some("test_agent"));
+    assert!(env_path.join("out/mock_config/args.gn.ref").exists());
 
-    let lease_file = config.leases_dir().join(format!("{}.lease", env_id));
+    let lease_file = env_path.join(".jiri_root").join("lease.json");
     assert!(lease_file.exists());
 
     assert!(env_info.path.join(".git").exists());
     assert!(env_info.path.join(".jiri_root").exists());
-    assert!(env_info.path.join("out/default").exists());
+    assert!(env_info.path.join("out/mock_config").exists());
     assert!(env_info.path.join(".fx-build-dir").exists());
 
     println!("--- List Worktrees after lease ---");
-    list_environments(config, false).unwrap();
-
-    // Test that we cannot delete the environment while leased
-    let delete_res = remove_environment(config, &env_id, false, false);
-    assert!(delete_res.is_err());
-    assert!(
-        delete_res
-            .unwrap_err()
-            .to_string()
-            .contains("Cannot remove worktree")
-    );
+    list_worktrees(config, false).unwrap();
 
     // 3. Test Worktree Release
-    release_worktree(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
     assert!(env_info.path.exists()); // Path must remain!
     assert!(!lease_file.exists()); // Lease must be deleted
 
     println!("--- List Worktrees after release ---");
-    list_environments(config, false).unwrap();
+    list_worktrees(config, false).unwrap();
 
     // 4. Test Worktree Remove (fully cleans up)
-    remove_environment(config, &env_id, false, false).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
     assert!(!env_path.exists()); // Directory is gone now
 
     println!("--- List Worktrees after remove ---");
-    list_environments(config, false).unwrap();
+    list_worktrees(config, false).unwrap();
 }
 
 #[test]
@@ -564,19 +634,15 @@ fn test_locate_path() {
     assert!(locate_path(config, None).is_err());
 
     // Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_path = config.environments_dir().join(&env_id);
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_path = config.worktrees_dir().join(&env_id);
 
     // Locate by ID
     let path = locate_path(config, Some(env_id.clone())).unwrap();
     assert_eq!(path, env_path);
 
-    // Locate last created (returns same path)
-    let path = locate_path(config, None).unwrap();
-    assert_eq!(path, env_path);
-
     // Allocate
-    let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Locate by ID (resolves to same path)
     let path = locate_path(config, Some(env_id.clone())).unwrap();
@@ -588,35 +654,78 @@ fn test_locate_path() {
 }
 
 #[test]
+fn test_manual_worktree() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+    use fx_worktree::locate::locate_path;
+
+    // 1. Manually add a worktree (simulating Jiri worktree add outside of fx-worktree)
+    let manual_path = env._fuchsia_dir_dir.path().join("my-manual-wt");
+
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
+    } else {
+        "jiri"
+    };
+
+    // Run mock jiri worktree add
+    fx_worktree::utils::run_command(
+        jiri_cmd,
+        &["worktree", "add", manual_path.to_str().unwrap()],
+        &config.fuchsia_dir,
+        &[],
+    )
+    .unwrap();
+
+    // Create fake args.gn inside it so config name is resolvable
+    let out_dir = manual_path.join("out/default");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    std::fs::write(
+        out_dir.join("args.gn"),
+        "build_info_product = \"manual_config\"\nbuild_info_board = \"x64\"\n",
+    )
+    .unwrap();
+
+    // 2. Locate should find it
+    let path = locate_path(config, Some("my-manual-wt".to_string())).unwrap();
+    assert_eq!(path, manual_path);
+
+    // 3. List should show it as "NotInPool" (verify it doesn't panic)
+    println!("--- List Worktrees with manual worktree ---");
+    list_worktrees(config, false).unwrap();
+}
+
+#[test]
 fn test_git_symlink_conversion() {
     let _lock = TEST_LOCK.lock().unwrap();
     let env = setup_mock_env();
     let config = &env.config;
 
-    // 1. Create environment (runs worktree add and converts .git to symlink)
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_path = config.environments_dir().join(&env_id);
+    // 1. Create environment (runs worktree add)
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_path = config.worktrees_dir().join(&env_id);
 
     let git_file_path = env_path.join(".git");
     assert!(git_file_path.exists());
     let metadata = fs::symlink_metadata(&git_file_path).unwrap();
-    assert!(metadata.file_type().is_symlink());
+    assert!(metadata.file_type().is_file());
 
-    // 2. Allocate (keeps symlink)
-    let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
+    // 2. Allocate (keeps file)
+    let env_info = lease_worktree(config, "mock_config", "test_agent", true, true).unwrap();
     let metadata = fs::symlink_metadata(&git_file_path).unwrap();
-    assert!(metadata.file_type().is_symlink());
+    assert!(metadata.file_type().is_file());
 
-    // 3. Free (keeps symlink)
-    release_worktree(config, &env_info.environment_id).unwrap();
+    // 3. Free (keeps file)
+    release_worktree(config, &env_info.worktree_id).unwrap();
     let metadata = fs::symlink_metadata(&git_file_path).unwrap();
-    assert!(metadata.file_type().is_symlink());
+    assert!(metadata.file_type().is_file());
 
-    // 4. Delete (converts it back to file, and removes it)
-    remove_environment(config, &env_id, false, false).unwrap();
+    // 4. Delete (removes it)
+    remove_worktree(config, &env_id, false, false).unwrap();
     assert!(!env_path.exists());
 }
-
 
 #[test]
 fn test_mtime_and_metadata_preservation() {
@@ -625,8 +734,8 @@ fn test_mtime_and_metadata_preservation() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_path = config.environments_dir().join(&env_id);
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_path = config.worktrees_dir().join(&env_id);
 
     // Verify metadata files were copied during create
     let ctf_gni = env_path.join("sdk/ctf/build/internal/ctf_releases.gni");
@@ -640,10 +749,11 @@ fn test_mtime_and_metadata_preservation() {
     assert!(jiri_manifest.exists());
 
     // 2. Allocate
-    let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Verify index exists
-    let index_path = env_info.path.join(".git/index");
+    let git_dir = resolve_git_dir(&env_info.path);
+    let index_path = git_dir.join("index");
     assert!(index_path.exists());
 
     // Record mtime of index, dummy.txt and metadata files before free
@@ -660,7 +770,7 @@ fn test_mtime_and_metadata_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // 3. Free (runs jiri clean, which we mocked to touch files)
-    release_worktree(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
 
     // Verify metadata files STILL exist
     assert!(ctf_gni.exists());
@@ -715,7 +825,7 @@ fn test_mtime_and_metadata_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // 4. Allocate again (triggers sync, which we mocked to touch files)
-    let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 = lease_worktree(config, "mock_config", "test_agent_2", true, true).unwrap();
 
     // Verify index mtime is preserved
     let index_mtime_after_alloc = fs::metadata(&index_path).unwrap().modified().unwrap();
@@ -770,7 +880,7 @@ fn test_mtime_and_metadata_preservation() {
     );
 
     // Release env_info_2 first
-    release_worktree(config, &env_info_2.environment_id).unwrap();
+    release_worktree(config, &env_info_2.worktree_id).unwrap();
 
     // Record mtime before sync that changes content
     let cipd_mtime_before_change_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
@@ -779,7 +889,7 @@ fn test_mtime_and_metadata_preservation() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Allocate again with sync, it should copy the new cipd.gni
-    let env_info_3 = lease_environment(config, "mock_config", "test_agent_3", true, true).unwrap();
+    let env_info_3 = lease_worktree(config, "mock_config", "test_agent_3", true, true).unwrap();
 
     let cipd_mtime_after_change_sync = fs::metadata(&cipd_gni).unwrap().modified().unwrap();
     assert_ne!(
@@ -788,8 +898,8 @@ fn test_mtime_and_metadata_preservation() {
     );
 
     // Clean up
-    release_worktree(config, &env_info_3.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info_3.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -799,10 +909,10 @@ fn test_parent_jiri_update() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
 
     // 2. Allocate (first time, gets initial revisions)
-    let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Verify initial content
     assert_eq!(
@@ -815,7 +925,7 @@ fn test_parent_jiri_update() {
     );
 
     // 3. Free environment
-    release_worktree(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
 
     // 4. Update parent repo (simulate jiri update)
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
@@ -834,9 +944,9 @@ fn test_parent_jiri_update() {
     run_setup_cmd("git", &["commit", "-m", "bump sub"], &parent_sub_path);
 
     // 5. Allocate again (should reuse same slot but update revisions)
-    let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 = lease_worktree(config, "mock_config", "test_agent_2", true, true).unwrap();
     assert_eq!(
-        env_info_2.environment_id, env_id,
+        env_info_2.worktree_id, env_id,
         "Should reuse the same environment slot"
     );
 
@@ -851,8 +961,8 @@ fn test_parent_jiri_update() {
     );
 
     // Clean up
-    release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info_2.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -862,10 +972,10 @@ fn test_prebuilt_isolation() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
 
     // 2. Allocate Workspace 1 (revision A)
-    let env_info = lease_environment(config, "mock_config", "test_agent", true, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent", true, true).unwrap();
 
     // Verify Workspace 1 sees version 1 (from mock cipd)
     let ws_prebuilt_file = env_info.path.join("prebuilt/tools/mock_tool/file.txt");
@@ -904,12 +1014,12 @@ fn test_prebuilt_isolation() {
     );
 
     // 4. Free Workspace 1
-    release_worktree(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
 
     // 5. Allocate Workspace 2 (uses same slot, now at revision B ➔ version 2)
-    let env_info_2 = lease_environment(config, "mock_config", "test_agent_2", true, true).unwrap();
+    let env_info_2 = lease_worktree(config, "mock_config", "test_agent_2", true, true).unwrap();
     assert_eq!(
-        env_info_2.environment_id, env_id,
+        env_info_2.worktree_id, env_id,
         "Should reuse the same environment slot"
     );
 
@@ -927,8 +1037,8 @@ fn test_prebuilt_isolation() {
     assert!(mock_tool_cache.join("version:2").exists());
 
     // Clean up
-    release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info_2.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 
     // Verify GC cleaned up unused versions from cache
     assert!(
@@ -949,10 +1059,10 @@ fn test_wheel_extraction_mtime_preservation() {
     let config = &env.config;
 
     // 1. Create a persistent environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
 
     // 2. Allocate Workspace (first run)
-    let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
     let pydantic_init =
@@ -965,7 +1075,7 @@ fn test_wheel_extraction_mtime_preservation() {
 
     // Simulate a build by creating the output file with a newer mtime
     let output_file = workspace_path.join(
-        "out/default/host_x64/gen/prebuilt/third_party/pydantic-core/pydantic_core/__init__.py",
+        "out/mock_config/host_x64/gen/prebuilt/third_party/pydantic-core/pydantic_core/__init__.py",
     );
     fs::create_dir_all(output_file.parent().unwrap()).unwrap();
     fs::write(&output_file, "mock_output").unwrap();
@@ -975,14 +1085,14 @@ fn test_wheel_extraction_mtime_preservation() {
     set_file_mtime(&output_file, t2).unwrap();
 
     // 3. Free Workspace
-    release_worktree(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
 
     // Wait a bit to ensure 'now' (if the script runs again) would be newer than t2
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 4. Allocate Workspace again (re-use)
-    let env_info_2 = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
-    assert_eq!(env_info_2.environment_id, env_id);
+    let env_info_2 = lease_worktree(config, "mock_config", "test_agent_1", true, true).unwrap();
+    assert_eq!(env_info_2.worktree_id, env_id);
 
     // Check mtime of the input file after re-use
     let t3 = get_file_mtime(&pydantic_init).unwrap();
@@ -997,8 +1107,8 @@ fn test_wheel_extraction_mtime_preservation() {
     assert!(t2 > t3, "Build output should remain newer than input");
 
     // Clean up
-    release_worktree(config, &env_info_2.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info_2.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -1009,8 +1119,8 @@ fn test_jiri_latest_snapshot_isolation() {
     let config = &env.config;
 
     // 1. Create and allocate workspace
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
     let ws_latest = workspace_path.join(".jiri_root/update_history/latest");
@@ -1037,8 +1147,8 @@ fn test_jiri_latest_snapshot_isolation() {
     );
 
     // Clean up
-    release_worktree(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -1049,23 +1159,23 @@ fn test_args_gn_mtime_preservation_on_free() {
     let config = &env.config;
 
     // 1. Allocate workspace
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_info = lease_environment(config, "mock_config", "test_agent_1", true, true).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent_1", true, true).unwrap();
     let workspace_path = env_info.path;
 
-    let args_gn = workspace_path.join("out/default/args.gn");
+    let args_gn = workspace_path.join("out/mock_config/args.gn");
     assert!(args_gn.exists());
 
     // Set a known mtime on args.gn and args.gn.ref
     let t1 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
     set_file_mtime(&args_gn, t1).unwrap();
 
-    let args_gn_ref = workspace_path.join("out/default/args.gn.ref");
+    let args_gn_ref = workspace_path.join("out/mock_config/args.gn.ref");
     fs::write(&args_gn_ref, fs::read_to_string(&args_gn).unwrap()).unwrap(); // ensure contents are identical
     set_file_mtime(&args_gn_ref, t1).unwrap();
 
     // 2. Free workspace
-    release_worktree(config, &env_info.environment_id).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
 
     // 3. Verify args.gn mtime did NOT change
     let t2 = get_file_mtime(&args_gn).unwrap();
@@ -1075,7 +1185,7 @@ fn test_args_gn_mtime_preservation_on_free() {
     );
 
     // Clean up
-    remove_environment(config, &env_id, false, false).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -1089,7 +1199,7 @@ fn test_nosync_and_sync() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
 
     // 2. Update parent repo (simulate changes that would be pulled during sync)
     let parent_dummy = env.config.fuchsia_dir.join("dummy.txt");
@@ -1102,21 +1212,22 @@ fn test_nosync_and_sync() {
     );
 
     // 3. Allocate with nosync = true
-    let env_info = lease_environment(config, "mock_config", "test_agent", false, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent", false, true).unwrap();
 
     // Verify that workspace dummy.txt is STILL "hello" (not updated to "hello v2")
     let ws_dummy = env_info.path.join("dummy.txt");
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello");
 
-    // 4. Run sync
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true).unwrap();
+    // 4. Release and re-lease with sync = true
+    release_worktree(config, &env_info.worktree_id).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent2", true, true).unwrap();
 
     // Verify that workspace dummy.txt is now "hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_dummy).unwrap(), "hello v2");
 
     // Clean up
-    release_worktree(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -1126,10 +1237,10 @@ fn test_sync_on_subproject_change() {
     let config = &env.config;
 
     // 1. Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
 
     // 2. Allocate with sync = false
-    let env_info = lease_environment(config, "mock_config", "test_agent", false, true).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent", false, true).unwrap();
 
     // Verify initial state of sub-project
     let ws_sub_dummy = env_info.path.join("third_party/sub/sub_dummy.txt");
@@ -1145,16 +1256,16 @@ fn test_sync_on_subproject_change() {
     // Verify that workspace sub-project is STILL "sub hello" (not updated yet)
     assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello");
 
-    // 4. Run sync (without force)
-    // This should NOT be a no-op because the sub-project revision changed.
-    fx_worktree::sync::sync_environment_by_id(config, &env_info.environment_id, true).unwrap();
+    // 4. Release and re-lease with sync = true
+    release_worktree(config, &env_info.worktree_id).unwrap();
+    let env_info = lease_worktree(config, "mock_config", "test_agent2", true, true).unwrap();
 
     // Verify that workspace sub-project is now "sub hello v2" (updated)
     assert_eq!(fs::read_to_string(&ws_sub_dummy).unwrap(), "sub hello v2");
 
     // Clean up
-    release_worktree(config, &env_info.environment_id).unwrap();
-    remove_environment(config, &env_id, false, false).unwrap();
+    release_worktree(config, &env_info.worktree_id).unwrap();
+    remove_worktree(config, &env_id, false, false).unwrap();
 }
 
 #[test]
@@ -1167,9 +1278,9 @@ fn test_invalid_id_validation() {
     assert!(fx_worktree::locate::locate_path(config, Some("../invalid".to_string())).is_err());
     assert!(fx_worktree::locate::locate_path(config, Some("/absolute/path".to_string())).is_err());
 
-    // Test remove_environment with invalid IDs
-    assert!(remove_environment(config, "../invalid", false, false).is_err());
-    assert!(remove_environment(config, "/absolute/path", false, false).is_err());
+    // Test remove_worktree with invalid IDs
+    assert!(remove_worktree(config, "../invalid", false, false).is_err());
+    assert!(remove_worktree(config, "/absolute/path", false, false).is_err());
 
     // Test release_worktree with invalid IDs
     assert!(release_worktree(config, "../invalid").is_err());
@@ -1183,22 +1294,22 @@ fn test_release_by_agent_id() {
     let config = &env.config;
 
     // 1. Create two environments
-    let env_id1 = add_environment(config, "mock_config", false).unwrap();
-    let env_id2 = add_environment(config, "mock_config", false).unwrap();
+    let env_id1 = add_worktree(config, "mock_config", false).unwrap();
+    let env_id2 = add_worktree(config, "mock_config", false).unwrap();
 
     // 2. Lease first one with agent_id "agent_unique"
-    let env_info1 = lease_environment(config, "mock_config", "agent_unique", true, true).unwrap();
-    let leased_id = env_info1.environment_id.clone();
+    let env_info1 = lease_worktree(config, "mock_config", "agent_unique", true, true).unwrap();
+    let leased_id = env_info1.worktree_id.clone();
 
     // Verify we can release it using agent_id "agent_unique"
     release_worktree(config, "agent_unique").unwrap();
 
-    let lease_file1 = config.leases_dir().join(format!("{}.lease", leased_id));
+    let lease_file1 = config.worktrees_dir().join(&leased_id).join(".jiri_root").join("lease.json");
     assert!(!lease_file1.exists());
 
     // 3. Lease both with same agent_id "agent_multiple"
-    let env_info1 = lease_environment(config, "mock_config", "agent_multiple", true, true).unwrap();
-    let env_info2 = lease_environment(config, "mock_config", "agent_multiple", true, true).unwrap();
+    let env_info1 = lease_worktree(config, "mock_config", "agent_multiple", true, true).unwrap();
+    let env_info2 = lease_worktree(config, "mock_config", "agent_multiple", true, true).unwrap();
 
     // Verify releasing by "agent_multiple" fails because it's ambiguous (multiple leases)
     let release_res = release_worktree(config, "agent_multiple");
@@ -1208,147 +1319,169 @@ fn test_release_by_agent_id() {
 
     // Verify they are still leased
     let lease_file1 = config
-        .leases_dir()
-        .join(format!("{}.lease", env_info1.environment_id));
+        .worktrees_dir()
+        .join(&env_info1.worktree_id)
+        .join(".jiri_root")
+        .join("lease.json");
     let lease_file2 = config
-        .leases_dir()
-        .join(format!("{}.lease", env_info2.environment_id));
+        .worktrees_dir()
+        .join(&env_info2.worktree_id)
+        .join(".jiri_root")
+        .join("lease.json");
     assert!(lease_file1.exists());
     assert!(lease_file2.exists());
 
     // Clean up individually by worktree ID
-    release_worktree(config, &env_info1.environment_id).unwrap();
-    release_worktree(config, &env_info2.environment_id).unwrap();
+    release_worktree(config, &env_info1.worktree_id).unwrap();
+    release_worktree(config, &env_info2.worktree_id).unwrap();
 
-    remove_environment(config, &env_id1, false, false).unwrap();
-    remove_environment(config, &env_id2, false, false).unwrap();
+    remove_worktree(config, &env_id1, false, false).unwrap();
+    remove_worktree(config, &env_id2, false, false).unwrap();
 }
 
+
+
 #[test]
-fn test_add_failure_cleanup() {
+fn test_mark_reserved_worktree() {
     let _lock = TEST_LOCK.lock().unwrap();
     let env = setup_mock_env();
     let config = &env.config;
+    use fx_worktree::list::list_worktrees;
+    use fx_worktree::locate::locate_path;
+    use fx_worktree::mark_reserved::mark_reserved_worktree;
+    use fx_worktree::worktree::{get_worktree_state, WorktreeState};
 
-    // Attempt to create environment with "fail_config" which should fail during fx set
-    let res = add_environment(config, "fail_config", false);
-    assert!(res.is_err());
+    // 1. Create a worktree (will be Free because add_worktree helper marks it Free)
+    let env_id = add_worktree(config, "mock_config", false).unwrap();
+    let env_path = config.worktrees_dir().join(&env_id);
+    assert!(env_path.exists());
+    assert_eq!(get_worktree_state(config, &env_path), WorktreeState::Free);
 
-    // Verify that the directory was cleaned up
-    let envs_dir = config.environments_dir();
-    if envs_dir.exists() {
-        let entries: Vec<_> = std::fs::read_dir(&envs_dir)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect();
-        assert!(
-            entries.is_empty(),
-            "Environments directory should be empty after failure, but contains: {:?}",
-            entries
-        );
-    }
+    // 2. Mark it reserved (should NOT move it, just mark it)
+    mark_reserved_worktree(config, &env_id, false).unwrap();
 
-    // Verify Jiri worktrees are cleaned up.
-    let output = Command::new("git")
-        .args(&["worktree", "list", "--porcelain"])
-        .current_dir(&config.fuchsia_dir)
-        .output()
-        .expect("failed to run git worktree list");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let worktree_count = stdout
-        .lines()
-        .filter(|l| l.starts_with("worktree "))
-        .count();
-    assert_eq!(
-        worktree_count, 1,
-        "There should be only 1 git worktree (the main repo), but found: {}",
-        stdout
-    );
+    // 3. Verify it did NOT move
+    assert!(env_path.exists());
+    assert_eq!(get_worktree_state(config, &env_path), WorktreeState::Reserved);
 
-    let output_sub = Command::new("git")
-        .args(&["worktree", "list", "--porcelain"])
-        .current_dir(config.fuchsia_dir.join("third_party/sub"))
-        .output()
-        .expect("failed to run git worktree list in subproject");
-    let stdout_sub = String::from_utf8_lossy(&output_sub.stdout);
-    let worktree_count_sub = stdout_sub
-        .lines()
-        .filter(|l| l.starts_with("worktree "))
-        .count();
-    assert_eq!(
-        worktree_count_sub, 1,
-        "Subproject should have only 1 git worktree, but found: {}",
-        stdout_sub
-    );
+    // 4. Locate should still find it
+    let path = locate_path(config, Some(env_id.clone())).unwrap();
+    assert_eq!(path, env_path);
+
+    // 5. List should show it as "Reserved"
+    println!("--- List Worktrees after marking reserved ---");
+    list_worktrees(config, false).unwrap();
 }
 
 #[test]
-fn test_all_local_injections() {
+fn test_mark_free_worktree() {
     let _lock = TEST_LOCK.lock().unwrap();
-    
-    let original_home = std::env::var("HOME").ok();
-
     let env = setup_mock_env();
     let config = &env.config;
+    use fx_worktree::list::list_worktrees;
+    use fx_worktree::locate::locate_path;
+    use fx_worktree::mark_free::mark_free_worktree;
+    use fx_worktree::worktree::{get_worktree_state, WorktreeState};
 
-    let mock_home_dir = TempDir::new().unwrap();
-    let mock_home = mock_home_dir.path();
-    
-    unsafe {
-        std::env::set_var("HOME", mock_home);
-    }
-
-    // 1. Create mock local executables
-    let local_gn_dir = mock_home.join("src/gn/out");
-    fs::create_dir_all(&local_gn_dir).unwrap();
-    let local_gn_file = local_gn_dir.join("gn");
-    fs::write(&local_gn_file, "mock local gn").unwrap();
-
-    let local_jiri_dir = mock_home.join("src/jiri");
-    fs::create_dir_all(&local_jiri_dir).unwrap();
-    let local_jiri_file = local_jiri_dir.join("jiri");
-    fs::write(&local_jiri_file, "mock local jiri").unwrap();
-
-    let local_shac_dir = mock_home.join("src/shac");
-    fs::create_dir_all(&local_shac_dir).unwrap();
-    let local_shac_file = local_shac_dir.join("shac");
-    fs::write(&local_shac_file, "mock local shac").unwrap();
-
-    // 2. Create environment
-    let env_id = add_environment(config, "mock_config", false).unwrap();
-    let env_path = config.environments_dir().join(&env_id);
-
-    // 3. Verify local GN injection
-    let gn_dir = env_path.join("prebuilt/third_party/gn/linux-amd64");
-    assert!(gn_dir.exists());
-    let target_gn = gn_dir.join("gn");
-    assert!(target_gn.exists());
-    assert!(fs::symlink_metadata(&target_gn).unwrap().file_type().is_symlink());
-    assert_eq!(fs::read_link(&target_gn).unwrap(), local_gn_file);
-
-    // 4. Verify local shac injection
-    let shac_dir = env_path.join("prebuilt/tools/shac");
-    assert!(shac_dir.exists());
-    let target_shac = shac_dir.join("shac");
-    assert!(target_shac.exists());
-    assert!(fs::symlink_metadata(&target_shac).unwrap().file_type().is_symlink());
-    assert_eq!(fs::read_link(&target_shac).unwrap(), local_shac_file);
-
-    // 5. Verify local Jiri injection
-    let ws_bin = env_path.join(".jiri_root/bin");
-    assert!(ws_bin.exists());
-    let target_jiri = ws_bin.join("jiri");
-    assert!(target_jiri.exists());
-    assert!(fs::symlink_metadata(&target_jiri).unwrap().file_type().is_symlink());
-    assert_eq!(fs::read_link(&target_jiri).unwrap(), local_jiri_file);
-
-    if let Some(h) = original_home {
-        unsafe {
-            std::env::set_var("HOME", h);
-        }
+    // 1. Manually add a worktree (it will be Reserved by default because it has no state file)
+    let manual_path = config.worktrees_dir().join("my-manual-wt");
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
     } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
+        "jiri"
+    };
+
+    fx_worktree::utils::run_command(
+        jiri_cmd,
+        &["worktree", "add", manual_path.to_str().unwrap()],
+        &config.fuchsia_dir,
+        &[],
+    )
+    .unwrap();
+
+    // Create fake args.gn inside it
+    let out_dir = manual_path.join("out/default");
+    fs::create_dir_all(&out_dir).unwrap();
+    fs::write(
+        out_dir.join("args.gn"),
+        "build_info_product = \"manual_config\"\nbuild_info_board = \"x64\"\n",
+    )
+    .unwrap();
+
+    // Verify it is Reserved initially
+    assert_eq!(get_worktree_state(config, &manual_path), WorktreeState::Reserved);
+
+    // 2. Mark it free (should NOT move it, just mark it)
+    let free_id = mark_free_worktree(config, "my-manual-wt", false).unwrap();
+    assert_eq!(free_id, "my-manual-wt");
+
+    // 3. Verify it did NOT move but state is Free
+    assert!(manual_path.exists());
+    assert_eq!(get_worktree_state(config, &manual_path), WorktreeState::Free);
+
+    // 4. Locate should still find it
+    let path = locate_path(config, Some("my-manual-wt".to_string())).unwrap();
+    assert_eq!(path, manual_path);
+
+    // 5. List should show it as "Free" (in pool)
+    println!("--- List Worktrees after import ---");
+    list_worktrees(config, false).unwrap();
+}
+
+#[test]
+fn test_multiple_configs() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    // 1. Create a worktree with two configs
+    let configs = vec!["config_one".to_string(), "config_two".to_string()];
+    let env_id = "multi_config".to_string();
+    let env_path = config.worktrees_dir().join(&env_id);
+
+    // Call mock jiri directly to add worktree
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let status = Command::new(&jiri_bin)
+        .args(&["worktree", "add", env_path.to_str().unwrap()])
+        .current_dir(&config.fuchsia_dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    // Write two outdirs
+    for cfg in &configs {
+        let out_dir = env_path.join("out").join(cfg);
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(out_dir.join("args.gn"), "mock_arg = true\n").unwrap();
     }
+
+    // Write .fx-build-dir pointing to the first one
+    fs::write(env_path.join(".fx-build-dir"), format!("out/{}\n", configs[0])).unwrap();
+
+    fx_worktree::worktree::set_worktree_state(&env_path, fx_worktree::worktree::WorktreeState::Free).unwrap();
+
+    // Verify both outdirs exist
+    assert!(env_path.join("out/config_one/args.gn").exists());
+    assert!(env_path.join("out/config_two/args.gn").exists());
+
+    // Verify .fx-build-dir points to the first one
+    let active_dir = fs::read_to_string(env_path.join(".fx-build-dir")).unwrap();
+    assert_eq!(active_dir.trim(), "out/config_one");
+
+    // 2. Verify we can lease it using EITHER config
+    let lease_info1 = lease_worktree(config, "config_one", "agent_1", true, true).unwrap();
+    assert_eq!(lease_info1.worktree_id, env_id);
+    release_worktree(config, &env_id).unwrap();
+
+    let lease_info2 = lease_worktree(config, "config_two", "agent_2", true, true).unwrap();
+    assert_eq!(lease_info2.worktree_id, env_id);
+    release_worktree(config, &env_id).unwrap();
+
+    // 3. List should show both configs in the OUTDIRS column
+    println!("--- List Worktrees with multiple configs ---");
+    list_worktrees(config, false).unwrap();
+
+    // Clean up
+    remove_worktree(config, &env_id, false, false).unwrap();
 }

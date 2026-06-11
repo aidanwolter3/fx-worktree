@@ -5,20 +5,15 @@ use std::path::PathBuf;
 #[command(
     name = "fx-worktree",
     version,
-    about = "Fuchsia Worktree Manager",
-    disable_help_flag = true
+    about = "Fuchsia Worktree Manager"
 )]
 pub struct Cli {
     /// Path to the main Fuchsia checkout (defaults to $FUCHSIA_DIR)
     #[arg(long, global = true, env = "FUCHSIA_DIR")]
     pub fuchsia_dir: Option<PathBuf>,
 
-    /// Print help
-    #[arg(short, long, global = true)]
-    pub help: bool,
-
     /// Print full help including internal commands
-    #[arg(long, global = true)]
+    #[arg(long)]
     pub helpfull: bool,
 
     /// Output structured JSON instead of human-readable text
@@ -30,28 +25,19 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
-#[command(disable_help_flag = true)]
 pub enum Commands {
-    /// Add a new worktree with a dedicated outdir
-    Add {
-        /// Configuration name (e.g. fuchsia.x64)
-        config: String,
-    },
-    /// Remove a worktree and its dedicated outdir
-    Remove {
-        /// Worktree ID to remove (must be free)
-        id: Option<String>,
-        /// Force removal even if the worktree is in an inconsistent state
-        #[arg(long, short)]
-        force: bool,
-    },
+
     /// List worktrees
     List,
     /// Lease a worktree to start work
     Lease {
-        /// Configuration name (e.g. fuchsia.x64)
-        config: String,
-        /// Optional agent ID (will be randomly generated if omitted)
+        /// Worktree name to lease
+        #[arg(required_unless_present = "any")]
+        name: Option<String>,
+        /// Lease any free worktree
+        #[arg(long, conflicts_with = "name")]
+        any: bool,
+        /// Optional agent ID
         #[arg(long)]
         agent_id: Option<String>,
         /// Sync the worktree to the latest code
@@ -61,26 +47,33 @@ pub enum Commands {
         #[arg(long, short)]
         print_path_only: bool,
     },
-    /// Update a worktree to the latest code in the main fuchsia checkout
-    Sync {
-        /// Worktree ID to sync
-        id: String,
-    },
-    /// Release and reset a worktree (does a git reset)
+    /// Release and reset a worktree to the state before the lease
     Release {
-        /// Worktree ID to release (must be leased)
-        id: String,
+        /// Worktree name to release (must be leased)
+        name: String,
     },
     /// Change directory to a worktree (shell wrapper required)
     Cd {
-        /// Worktree ID
-        id: Option<String>,
+        /// Worktree name
+        name: Option<String>,
+    },
+    /// Mark a worktree as free (available for leasing)
+    #[command(name = "mark-free")]
+    MarkFree {
+        /// Worktree name to mark free
+        name: String,
+    },
+    /// Mark a worktree as reserved (not available for leasing)
+    #[command(name = "mark-reserved")]
+    MarkReserved {
+        /// Worktree name to mark reserved
+        name: String,
     },
     /// Locate the path of a worktree
     #[command(hide = true)]
     Locate {
-        /// Worktree ID
-        id: Option<String>,
+        /// Worktree name
+        name: Option<String>,
     },
     /// Generate shell completion scripts to stdout
     #[command(hide = true)]
@@ -89,4 +82,72 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_parse_list() {
+        let args = vec!["fx-worktree", "list"];
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(matches!(cli.command, Some(Commands::List)));
+    }
+
+    #[test]
+    fn test_cli_parse_lease_with_name() {
+        let args = vec!["fx-worktree", "lease", "mywt", "--sync", "--agent-id", "myagent"];
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Some(Commands::Lease { name, any, agent_id, sync, print_path_only }) => {
+                assert_eq!(name, Some("mywt".to_string()));
+                assert!(!any);
+                assert_eq!(agent_id, Some("myagent".to_string()));
+                assert!(sync);
+                assert!(!print_path_only);
+            }
+            _ => panic!("Expected Lease command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_lease_any() {
+        let args = vec!["fx-worktree", "lease", "--any"];
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Some(Commands::Lease { name, any, .. }) => {
+                assert_eq!(name, None);
+                assert!(any);
+            }
+            _ => panic!("Expected Lease command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_lease_missing_name_and_any() {
+        let args = vec!["fx-worktree", "lease"];
+        let res = Cli::try_parse_from(args);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_cli_parse_lease_conflicting_args() {
+        let args = vec!["fx-worktree", "lease", "mywt", "--any"];
+        let res = Cli::try_parse_from(args);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_cli_parse_release() {
+        let args = vec!["fx-worktree", "release", "mywt"];
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Some(Commands::Release { name }) => {
+                assert_eq!(name, "mywt".to_string());
+            }
+            _ => panic!("Expected Release command"),
+        }
+    }
 }
