@@ -19,14 +19,14 @@ cargo install --path . --force
 ## Usage
 
 In order to achieve fast incremental builds, worktrees are kept around in a pool.
-You create worktrees using Jiri directly:
+You create worktrees using the `add` subcommand:
 ```bash
-jiri worktree add .jiri_root/worktrees/<name>
+fx-worktree add <name>
 ```
 Once created, you can navigate into the worktree and configure its build directories (e.g. `fx set fuchsia.x64`).
 
-By default, newly created worktrees are **Reserved** (intended for local manual work).
-To make a worktree available for automated agents to lease, you must explicitly mark it as **Free**.
+By default, newly created worktrees are **Free** (marked as available for automated agents to lease immediately).
+To reserve a worktree for local manual work, you must explicitly mark it as **Reserved**.
 
 ### 1. Mark a Worktree as Free
 Mark a reserved worktree as free so it can be leased.
@@ -76,12 +76,12 @@ fx-worktree list [--json]
 
 *   **Default Output:**
     ```none
-    ../../fuchsia/.jiri_root/worktrees/worktree1    Reserved
+    worktree1                                       Reserved
     ├── out/fuchsia.x64 (fuchsia.x64)
     └── out/fuchsia.arm64 (fuchsia.arm64)
-    ../../fuchsia/.jiri_root/worktrees/worktree2    Free
+    worktree2                                       Free
     └── out/fuchsia.x64 (fuchsia.x64)
-    ../../fuchsia/.jiri_root/worktrees/worktree3    In Use (agent-2f26359d)
+    worktree3                                       In Use (agent-2f26359d)
     └── out/fuchsia.x64 (fuchsia.x64)
     ```
 
@@ -96,6 +96,13 @@ Change directory to a worktree (shell wrapper required).
 ```bash
 fx-worktree cd [name]
 ```
+
+### 7. Remove a Worktree
+Safely remove a Jiri worktree.
+```bash
+fx-worktree remove <name> [--force]
+```
+*   `--force` / `-f`: Bypasses safety checks. Required to delete a worktree that is currently leased or contains uncommitted changes.
 
 ## Running Tests
 

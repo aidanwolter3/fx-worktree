@@ -96,52 +96,57 @@ def setup_mock_workspace():
     os.makedirs(jiri_root)
     os.makedirs(os.path.join(jiri_root, "worktrees"))
     
-    # Create worktrees
-    wt_ids = ["fuchsia.x64-37954053"]
-    registry_lines = []
-    for wt_id in wt_ids:
-        wt_path = os.path.join(jiri_root, "worktrees", wt_id)
-        os.makedirs(wt_path)
-        
-        # Init git repo
-        subprocess.run(["git", "init", "-q", wt_path])
-        subprocess.run(["git", "-C", wt_path, "config", "user.name", "Test"])
-        subprocess.run(["git", "-C", wt_path, "config", "user.email", "test@test.com"])
-        with open(os.path.join(wt_path, "dummy"), "w") as f:
-            f.write("dummy")
-        subprocess.run(["git", "-C", wt_path, "add", "dummy"])
-        subprocess.run(["git", "-C", wt_path, "commit", "-m", "init", "-q"])
-        
-        # Create args.gn
-        out_dir = os.path.join(wt_path, "out", "default")
-        os.makedirs(out_dir)
-        with open(os.path.join(out_dir, "args.gn"), "w") as f:
-            f.write('build_info_product = "fuchsia"\n')
-            f.write('build_info_board = "x64"\n')
-
-        # Create worktree state metadata (Free)
-        wt_jiri_root = os.path.join(wt_path, ".jiri_root")
-        os.makedirs(wt_jiri_root)
-        with open(os.path.join(wt_jiri_root, "worktree-state"), "w") as f:
-            f.write("free\n")
-            
-        registry_lines.append(os.path.abspath(wt_path))
-        
-    # Write worktrees_registry
+    # Create empty worktrees_registry
     with open(os.path.join(jiri_root, "worktrees_registry"), "w") as f:
-        for line in registry_lines:
-            f.write(f"{line}\n")
+        pass
             
     # Create mock jiri script in parent .jiri_root/bin/jiri
     mock_jiri_dir = os.path.join(jiri_root, "bin")
     os.makedirs(mock_jiri_dir)
     mock_jiri_path = os.path.join(mock_jiri_dir, "jiri")
+    
+    jiri_script = """#!/bin/bash
+if [ "$1" = "worktree" ]; then
+    if [ "$2" = "add" ]; then
+        target_path="$3"
+        mkdir -p "$target_path"
+        # Create an outdir so list shows something nice
+        mkdir -p "$target_path/out/default"
+        echo 'build_info_product = "fuchsia"' > "$target_path/out/default/args.gn"
+        echo 'build_info_board = "x64"' >> "$target_path/out/default/args.gn"
+        
+        # We also need a dummy git repo so list/lease can run git commands inside it
+        git init -q "$target_path"
+        git -C "$target_path" config user.name "Test"
+        git -C "$target_path" config user.email "test@test.com"
+        touch "$target_path/dummy"
+        git -C "$target_path" add dummy
+        git -C "$target_path" commit -m "init" -q
+        
+        # Append to registry
+        echo "$(realpath "$target_path")" >> "$(dirname "$0")/../worktrees_registry"
+        exit 0
+    elif [ "$2" = "remove" ]; then
+        target_path="$3"
+        if [ "$target_path" = "-f" ] || [ "$target_path" = "-force" ]; then
+            target_path="$4"
+        fi
+        resolved_path="$(realpath "$target_path")"
+        if [ -f "$(dirname "$0")/../worktrees_registry" ]; then
+            # Filter out the removed path
+            grep -v "^$resolved_path$" "$(dirname "$0")/../worktrees_registry" > "$(dirname "$0")/../worktrees_registry.tmp" || true
+            mv "$(dirname "$0")/../worktrees_registry.tmp" "$(dirname "$0")/../worktrees_registry"
+        fi
+        rm -rf "$target_path"
+        exit 0
+    elif [ "$2" = "clean" ]; then
+        exit 0
+    fi
+fi
+exit 0
+"""
     with open(mock_jiri_path, "w") as f:
-        f.write("#!/bin/bash\n")
-        f.write("if [ \"$1\" = \"worktree\" ] && [ \"$2\" = \"clean\" ]; then\n")
-        f.write("    exit 0\n")
-        f.write("fi\n")
-        f.write("exit 0\n")
+        f.write(jiri_script)
     os.chmod(mock_jiri_path, 0o755)
             
     return test_dir, fuchsia_dir
@@ -177,7 +182,7 @@ def generate_frames(bin_path):
     # Set up mock workspace for execution
     test_dir, fuchsia_dir = setup_mock_workspace()
     try:
-        # 1. fx-worktree list
+        # 1. fx-worktree list (Initially empty)
         type_command("fx-worktree list")
         output = run_cmd(bin_path, fuchsia_dir, ["list"])
         for line in output.splitlines():
@@ -185,20 +190,15 @@ def generate_frames(bin_path):
             term.add_line(line)
         append_frame(show_cursor=True, duration=2000)
 
-        # 2. fx-worktree lease --any
-        type_command("fx-worktree lease --any")
-        output = run_cmd(bin_path, fuchsia_dir, ["lease", "--any"])
-        leased_id = None
+        # 2. fx-worktree add worktree1
+        type_command("fx-worktree add worktree1")
+        output = run_cmd(bin_path, fuchsia_dir, ["add", "worktree1"])
         for line in output.splitlines():
             line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
             term.add_line(line)
-            if "Worktree ID" in line:
-                match = re.search(r'fuchsia\.x64-[a-f0-9]+', line)
-                if match:
-                    leased_id = match.group(0)
-        append_frame(show_cursor=True, duration=4000)
+        append_frame(show_cursor=True, duration=2500)
 
-        # 3. fx-worktree list again
+        # 3. fx-worktree list (Shows worktree1 as Free)
         type_command("fx-worktree list")
         output = run_cmd(bin_path, fuchsia_dir, ["list"])
         for line in output.splitlines():
@@ -206,14 +206,45 @@ def generate_frames(bin_path):
             term.add_line(line)
         append_frame(show_cursor=True, duration=2500)
 
-        # 4. fx-worktree release <id>
-        if leased_id:
-            type_command(f"fx-worktree release {leased_id}")
-            output = run_cmd(bin_path, fuchsia_dir, ["release", leased_id])
-            for line in output.splitlines():
-                line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
-                term.add_line(line)
-            append_frame(show_cursor=True, duration=2500)
+        # 4. fx-worktree lease worktree1
+        type_command("fx-worktree lease worktree1")
+        output = run_cmd(bin_path, fuchsia_dir, ["lease", "worktree1"])
+        for line in output.splitlines():
+            line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
+            term.add_line(line)
+        append_frame(show_cursor=True, duration=4000)
+
+        # 5. fx-worktree list (Shows worktree1 as In Use)
+        type_command("fx-worktree list")
+        output = run_cmd(bin_path, fuchsia_dir, ["list"])
+        for line in output.splitlines():
+            line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
+            term.add_line(line)
+        append_frame(show_cursor=True, duration=2500)
+
+        # 6. fx-worktree release worktree1
+        type_command("fx-worktree release worktree1")
+        output = run_cmd(bin_path, fuchsia_dir, ["release", "worktree1"])
+        for line in output.splitlines():
+            line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
+            term.add_line(line)
+        append_frame(show_cursor=True, duration=2500)
+
+        # 7. fx-worktree remove worktree1
+        type_command("fx-worktree remove worktree1")
+        output = run_cmd(bin_path, fuchsia_dir, ["remove", "worktree1"])
+        for line in output.splitlines():
+            line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
+            term.add_line(line)
+        append_frame(show_cursor=True, duration=2500)
+
+        # 8. fx-worktree list (Empty again)
+        type_command("fx-worktree list")
+        output = run_cmd(bin_path, fuchsia_dir, ["list"])
+        for line in output.splitlines():
+            line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
+            term.add_line(line)
+        append_frame(show_cursor=True, duration=2500)
 
         # Final blink
         for _ in range(2):

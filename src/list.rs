@@ -110,12 +110,24 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
     for entry in &wt_entries {
         let path = std::path::Path::new(&entry.path);
         let parent = path.parent().unwrap_or(std::path::Path::new(""));
-        let shortened_parent = crate::utils::shorten_path(parent, &cwd);
-        let sp_str = shortened_parent.to_string_lossy().into_owned();
-        let prefix = if sp_str.is_empty() || sp_str == "." {
+        let is_default_worktrees_dir = if let (Ok(p_canon), Ok(wt_canon)) =
+            (parent.canonicalize(), config.worktrees_dir().canonicalize())
+        {
+            p_canon == wt_canon
+        } else {
+            false
+        };
+
+        let prefix = if is_default_worktrees_dir {
             "".to_string()
         } else {
-            format!("{}/", sp_str)
+            let shortened_parent = crate::utils::shorten_path(parent, &cwd);
+            let sp_str = shortened_parent.to_string_lossy().into_owned();
+            if sp_str.is_empty() || sp_str == "." {
+                "".to_string()
+            } else {
+                format!("{}/", sp_str)
+            }
         };
         max_total_len = max_total_len.max(prefix.len() + entry.name.len());
         formatted_paths.push((prefix, entry.name.clone()));

@@ -4,11 +4,11 @@
 
 //! Jiri Worktree representation, state persistence, and sync logic.
 
+use crate::config::Config;
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::config::Config;
-use anyhow::{Context, Result};
 
 /// Represents information stored in the active `lease.json` metadata file
 /// of a leased worktree.
@@ -38,7 +38,10 @@ pub enum WorktreeState {
 /// Reads the Jiri worktrees registry file (`.jiri_root/worktrees_registry`) and returns
 /// canonical paths to all existing worktrees.
 pub fn read_jiri_worktrees(config: &Config) -> Result<Vec<PathBuf>> {
-    let registry_path = config.fuchsia_dir.join(".jiri_root").join("worktrees_registry");
+    let registry_path = config
+        .fuchsia_dir
+        .join(".jiri_root")
+        .join("worktrees_registry");
     if !registry_path.exists() {
         return Ok(Vec::new());
     }
@@ -111,6 +114,73 @@ pub fn sync_worktree(
 
     crate::utils::run_command(jiri_cmd, &["worktree", "sync"], workspace_path, &[])
         .context("Failed to run jiri worktree sync")?;
+
+    Ok(())
+}
+
+/// Adds a new Jiri worktree inside the configured worktrees directory
+/// and marks its state as `Free`.
+pub fn add_worktree(config: &Config, name: &str) -> Result<()> {
+    let target_path = config.worktrees_dir().join(name);
+    if target_path.exists() {
+        return Err(anyhow!(
+            "Directory already exists at target path {:?}",
+            target_path
+        ));
+    }
+
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
+    } else {
+        "jiri"
+    };
+
+    println!("Creating Jiri worktree '{}'...", name);
+    crate::utils::run_command(
+        jiri_cmd,
+        &["worktree", "add", target_path.to_str().unwrap()],
+        &config.fuchsia_dir,
+        &[],
+    )
+    .context("Failed to run jiri worktree add")?;
+
+    // Mark the new worktree as Free by default
+    set_worktree_state(&target_path, WorktreeState::Free)?;
+    println!("Worktree '{}' successfully added and marked as free.", name);
+
+    Ok(())
+}
+
+/// Removes a Jiri worktree after verifying it is not leased (unless forced).
+pub fn remove_worktree(config: &Config, name: &str, force: bool) -> Result<()> {
+    let path = crate::locate::locate_path(config, Some(name.to_string()))?;
+
+    // Check if leased
+    let lease_file_path = path.join(".jiri_root").join("lease.json");
+    if lease_file_path.exists() && !force {
+        return Err(anyhow!(
+            "Worktree '{}' is currently leased. Use --force to override.",
+            name
+        ));
+    }
+
+    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
+    let jiri_cmd = if jiri_bin.exists() {
+        jiri_bin.to_str().unwrap()
+    } else {
+        "jiri"
+    };
+
+    println!("Removing Jiri worktree '{}'...", name);
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("-f");
+    }
+    args.push(path.to_str().unwrap());
+
+    crate::utils::run_command(jiri_cmd, &args, &config.fuchsia_dir, &[])
+        .context("Failed to run jiri worktree remove")?;
 
     Ok(())
 }

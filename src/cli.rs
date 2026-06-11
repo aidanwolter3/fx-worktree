@@ -2,11 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "fx-worktree",
-    version,
-    about = "Fuchsia Worktree Manager"
-)]
+#[command(name = "fx-worktree", version, about = "Fuchsia Worktree Manager")]
 pub struct Cli {
     /// Path to the main Fuchsia checkout (defaults to $FUCHSIA_DIR)
     #[arg(long, global = true, env = "FUCHSIA_DIR")]
@@ -26,9 +22,21 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-
     /// List worktrees
     List,
+    /// Add a new Jiri worktree
+    Add {
+        /// Name of the new worktree
+        name: String,
+    },
+    /// Remove a Jiri worktree
+    Remove {
+        /// Name of the worktree to remove
+        name: String,
+        /// Force removal even if the worktree is leased or has uncommitted changes
+        #[arg(long, short)]
+        force: bool,
+    },
     /// Lease a worktree to start work
     Lease {
         /// Worktree name to lease
@@ -98,10 +106,23 @@ mod tests {
 
     #[test]
     fn test_cli_parse_lease_with_name() {
-        let args = vec!["fx-worktree", "lease", "mywt", "--sync", "--agent-id", "myagent"];
+        let args = vec![
+            "fx-worktree",
+            "lease",
+            "mywt",
+            "--sync",
+            "--agent-id",
+            "myagent",
+        ];
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
-            Some(Commands::Lease { name, any, agent_id, sync, print_path_only }) => {
+            Some(Commands::Lease {
+                name,
+                any,
+                agent_id,
+                sync,
+                print_path_only,
+            }) => {
                 assert_eq!(name, Some("mywt".to_string()));
                 assert!(!any);
                 assert_eq!(agent_id, Some("myagent".to_string()));
@@ -148,6 +169,41 @@ mod tests {
                 assert_eq!(name, "mywt".to_string());
             }
             _ => panic!("Expected Release command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_add() {
+        let args = vec!["fx-worktree", "add", "new-wt"];
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Some(Commands::Add { name }) => {
+                assert_eq!(name, "new-wt".to_string());
+            }
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_remove() {
+        let args = vec!["fx-worktree", "remove", "wt-to-del"];
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Some(Commands::Remove { name, force }) => {
+                assert_eq!(name, "wt-to-del".to_string());
+                assert!(!force);
+            }
+            _ => panic!("Expected Remove command"),
+        }
+
+        let args_forced = vec!["fx-worktree", "remove", "wt-to-del", "--force"];
+        let cli_forced = Cli::try_parse_from(args_forced).unwrap();
+        match cli_forced.command {
+            Some(Commands::Remove { name, force }) => {
+                assert_eq!(name, "wt-to-del".to_string());
+                assert!(force);
+            }
+            _ => panic!("Expected Remove command"),
         }
     }
 }

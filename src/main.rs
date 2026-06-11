@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use fx_worktree::cli::{Cli, Commands};
 use fx_worktree::colors::Colors;
 use fx_worktree::config::Config;
-use fx_worktree::{lease, list, locate, mark_free, mark_reserved, release};
+use fx_worktree::{lease, list, locate, mark_free, mark_reserved, release, worktree};
 
 fn main() -> Result<()> {
     // Initialize logger (default to warn to silence info logs by default)
@@ -25,6 +25,8 @@ fn main() -> Result<()> {
         let mut cmd = Cli::command();
         let subcmd_name = cli.command.as_ref().map(|c| match c {
             Commands::List => "list",
+            Commands::Add { .. } => "add",
+            Commands::Remove { .. } => "remove",
             Commands::Lease { .. } => "lease",
             Commands::Release { .. } => "release",
             Commands::Cd { .. } => "cd",
@@ -47,11 +49,29 @@ fn main() -> Result<()> {
     }
 
     match cli.command.unwrap() {
-
         Commands::List => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
             list::list_worktrees(&config, cli.json)?;
+        }
+        Commands::Add { name } => {
+            let config = Config::new(cli.fuchsia_dir)?;
+            config.init_topology()?;
+            worktree::add_worktree(&config, &name)?;
+        }
+        Commands::Remove { name, force } => {
+            let config = Config::new(cli.fuchsia_dir)?;
+            config.init_topology()?;
+            worktree::remove_worktree(&config, &name, force)?;
+            if cli.json {
+                println!("{{\"worktree_id\":\"{}\",\"removed\":true}}", name);
+            } else {
+                println!(
+                    "{} Worktree '{}' successfully removed.",
+                    colors.green("✔"),
+                    colors.blue(&name)
+                );
+            }
         }
         Commands::Lease {
             name,
@@ -103,10 +123,7 @@ fn main() -> Result<()> {
             }
             let released_id = release::release_worktree(&config, &name)?;
             if cli.json {
-                println!(
-                    "{{\"released\":true,\"worktree_id\":\"{}\"}}",
-                    released_id
-                );
+                println!("{{\"released\":true,\"worktree_id\":\"{}\"}}", released_id);
             } else {
                 println!(
                     "{} Worktree {} successfully released.",
@@ -183,6 +200,10 @@ fn main() -> Result<()> {
                     "':name -- Worktree name to mark free:_default'",
                     "':name -- Worktree name to mark free:_fx_worktree_reserved_ids'",
                 );
+                script = script.replace(
+                    "':name -- Name of the worktree to remove:_default'",
+                    "':name -- Name of the worktree to remove:_fx_worktree_all_ids'",
+                );
 
                 // Patch lease name completions
                 script = script.replace(
@@ -191,10 +212,7 @@ fn main() -> Result<()> {
                 );
 
                 // Hide locate subcommand from completions list
-                script = script.replace(
-                    "'locate:Locate the path of a worktree' \\\n",
-                    "",
-                );
+                script = script.replace("'locate:Locate the path of a worktree' \\\n", "");
 
                 // Hide completions subcommand from completions list
                 script = script.replace(

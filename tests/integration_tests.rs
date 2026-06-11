@@ -6,16 +6,14 @@ use std::sync::Mutex;
 use tempfile::TempDir;
 
 fn add_worktree(config: &Config, config_name: &str, _quiet: bool) -> anyhow::Result<String> {
-    let name = format!("{}-{}", config_name, &uuid::Uuid::new_v4().to_string()[0..8]);
+    let name = format!(
+        "{}-{}",
+        config_name,
+        &uuid::Uuid::new_v4().to_string()[0..8]
+    );
     let wt_path = config.worktrees_dir().join(&name);
 
-    // Call mock jiri directly to add worktree
-    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
-    let status = Command::new(&jiri_bin)
-        .args(&["worktree", "add", wt_path.to_str().unwrap()])
-        .current_dir(&config.fuchsia_dir)
-        .status()?;
-    assert!(status.success(), "Failed to run jiri worktree add in tests");
+    fx_worktree::worktree::add_worktree(config, &name)?;
 
     // Write default build directory config
     let out_dir = wt_path.join("out").join(config_name);
@@ -23,9 +21,11 @@ fn add_worktree(config: &Config, config_name: &str, _quiet: bool) -> anyhow::Res
     fs::write(out_dir.join("args.gn"), "mock_arg = true\n")?;
 
     // Also write .fx-build-dir
-    fs::write(wt_path.join(".fx-build-dir"), format!("out/{}\n", config_name))?;
+    fs::write(
+        wt_path.join(".fx-build-dir"),
+        format!("out/{}\n", config_name),
+    )?;
 
-    fx_worktree::worktree::set_worktree_state(&wt_path, fx_worktree::worktree::WorktreeState::Free)?;
     Ok(name)
 }
 use fx_worktree::config::Config;
@@ -33,24 +33,7 @@ use fx_worktree::lease::lease_worktree as lease_worktree_raw;
 use fx_worktree::list::list_worktrees;
 use fx_worktree::release::release_worktree;
 fn remove_worktree(config: &Config, id: &str, force: bool, _quiet: bool) -> anyhow::Result<()> {
-    if std::path::Path::new(id).components().count() > 1 {
-        return Err(anyhow::anyhow!("Invalid ID: {}", id));
-    }
-    let wt_path = config.worktrees_dir().join(id);
-    let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
-    let mut args = vec!["worktree", "remove"];
-    if force {
-        args.push("-force");
-    }
-    args.push(wt_path.to_str().unwrap());
-    let status = std::process::Command::new(&jiri_bin)
-        .args(&args)
-        .current_dir(&config.fuchsia_dir)
-        .status()?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("jiri worktree remove failed"));
-    }
-    Ok(())
+    fx_worktree::worktree::remove_worktree(config, id, force)
 }
 
 fn lease_worktree(
@@ -561,8 +544,6 @@ echo "mock extraction done"
         &["commit", "-m", "initial commit with mocks"],
         fuchsia_path,
     );
-
-
 
     let config = Config::new(Some(fuchsia_path.to_path_buf())).unwrap();
     config.init_topology().unwrap();
@@ -1304,7 +1285,11 @@ fn test_release_by_agent_id() {
     // Verify we can release it using agent_id "agent_unique"
     release_worktree(config, "agent_unique").unwrap();
 
-    let lease_file1 = config.worktrees_dir().join(&leased_id).join(".jiri_root").join("lease.json");
+    let lease_file1 = config
+        .worktrees_dir()
+        .join(&leased_id)
+        .join(".jiri_root")
+        .join("lease.json");
     assert!(!lease_file1.exists());
 
     // 3. Lease both with same agent_id "agent_multiple"
@@ -1339,8 +1324,6 @@ fn test_release_by_agent_id() {
     remove_worktree(config, &env_id2, false, false).unwrap();
 }
 
-
-
 #[test]
 fn test_mark_reserved_worktree() {
     let _lock = TEST_LOCK.lock().unwrap();
@@ -1349,7 +1332,7 @@ fn test_mark_reserved_worktree() {
     use fx_worktree::list::list_worktrees;
     use fx_worktree::locate::locate_path;
     use fx_worktree::mark_reserved::mark_reserved_worktree;
-    use fx_worktree::worktree::{get_worktree_state, WorktreeState};
+    use fx_worktree::worktree::{WorktreeState, get_worktree_state};
 
     // 1. Create a worktree (will be Free because add_worktree helper marks it Free)
     let env_id = add_worktree(config, "mock_config", false).unwrap();
@@ -1362,7 +1345,10 @@ fn test_mark_reserved_worktree() {
 
     // 3. Verify it did NOT move
     assert!(env_path.exists());
-    assert_eq!(get_worktree_state(config, &env_path), WorktreeState::Reserved);
+    assert_eq!(
+        get_worktree_state(config, &env_path),
+        WorktreeState::Reserved
+    );
 
     // 4. Locate should still find it
     let path = locate_path(config, Some(env_id.clone())).unwrap();
@@ -1381,7 +1367,7 @@ fn test_mark_free_worktree() {
     use fx_worktree::list::list_worktrees;
     use fx_worktree::locate::locate_path;
     use fx_worktree::mark_free::mark_free_worktree;
-    use fx_worktree::worktree::{get_worktree_state, WorktreeState};
+    use fx_worktree::worktree::{WorktreeState, get_worktree_state};
 
     // 1. Manually add a worktree (it will be Reserved by default because it has no state file)
     let manual_path = config.worktrees_dir().join("my-manual-wt");
@@ -1410,7 +1396,10 @@ fn test_mark_free_worktree() {
     .unwrap();
 
     // Verify it is Reserved initially
-    assert_eq!(get_worktree_state(config, &manual_path), WorktreeState::Reserved);
+    assert_eq!(
+        get_worktree_state(config, &manual_path),
+        WorktreeState::Reserved
+    );
 
     // 2. Mark it free (should NOT move it, just mark it)
     let free_id = mark_free_worktree(config, "my-manual-wt", false).unwrap();
@@ -1418,7 +1407,10 @@ fn test_mark_free_worktree() {
 
     // 3. Verify it did NOT move but state is Free
     assert!(manual_path.exists());
-    assert_eq!(get_worktree_state(config, &manual_path), WorktreeState::Free);
+    assert_eq!(
+        get_worktree_state(config, &manual_path),
+        WorktreeState::Free
+    );
 
     // 4. Locate should still find it
     let path = locate_path(config, Some("my-manual-wt".to_string())).unwrap();
@@ -1457,9 +1449,17 @@ fn test_multiple_configs() {
     }
 
     // Write .fx-build-dir pointing to the first one
-    fs::write(env_path.join(".fx-build-dir"), format!("out/{}\n", configs[0])).unwrap();
+    fs::write(
+        env_path.join(".fx-build-dir"),
+        format!("out/{}\n", configs[0]),
+    )
+    .unwrap();
 
-    fx_worktree::worktree::set_worktree_state(&env_path, fx_worktree::worktree::WorktreeState::Free).unwrap();
+    fx_worktree::worktree::set_worktree_state(
+        &env_path,
+        fx_worktree::worktree::WorktreeState::Free,
+    )
+    .unwrap();
 
     // Verify both outdirs exist
     assert!(env_path.join("out/config_one/args.gn").exists());
