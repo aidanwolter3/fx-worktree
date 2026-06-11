@@ -185,9 +185,9 @@ def generate_frames(bin_path):
             term.add_line(line)
         append_frame(show_cursor=True, duration=2000)
 
-        # 2. fx-worktree lease fuchsia.x64
-        type_command("fx-worktree lease fuchsia.x64")
-        output = run_cmd(bin_path, fuchsia_dir, ["lease", "fuchsia.x64"])
+        # 2. fx-worktree lease --any
+        type_command("fx-worktree lease --any")
+        output = run_cmd(bin_path, fuchsia_dir, ["lease", "--any"])
         leased_id = None
         for line in output.splitlines():
             line = line.replace(fuchsia_dir, "/usr/local/google/home/username/fuchsia")
