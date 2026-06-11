@@ -5,7 +5,7 @@
 //! Management logic for marking worktrees as free.
 
 use crate::config::Config;
-use crate::worktree::{set_worktree_state, WorktreeState};
+use crate::worktree::{WorktreeState, set_worktree_state};
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 
@@ -15,15 +15,15 @@ use std::fs;
 /// - The worktree does not exist on disk.
 /// - The worktree is not registered in Jiri's worktrees registry.
 /// - The worktree is already marked free.
-pub fn mark_free_worktree(
-    config: &Config,
-    name: &str,
-    quiet: bool,
-) -> Result<String> {
+pub fn mark_free_worktree(config: &Config, name: &str, quiet: bool) -> Result<String> {
     let path = config.worktrees_dir().join(name);
 
     if !path.exists() {
-        return Err(anyhow!("Worktree with name '{}' does not exist in {:?}", name, config.worktrees_dir()));
+        return Err(anyhow!(
+            "Worktree with name '{}' does not exist in {:?}",
+            name,
+            config.worktrees_dir()
+        ));
     }
 
     let path = fs::canonicalize(&path)

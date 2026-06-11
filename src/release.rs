@@ -5,8 +5,8 @@
 //! Management logic for releasing/resetting worktrees.
 
 use crate::config::Config;
-use crate::worktree::WorktreeInfo;
 use crate::utils::{copy_file_if_different, run_command};
+use crate::worktree::WorktreeInfo;
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 

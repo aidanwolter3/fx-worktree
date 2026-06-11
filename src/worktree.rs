@@ -147,6 +147,7 @@ pub fn add_worktree(config: &Config, name: &str) -> Result<()> {
 
     // Mark the new worktree as Free by default
     set_worktree_state(&target_path, WorktreeState::Free)?;
+    config.record_last_worktree(&target_path)?;
     println!("Worktree '{}' successfully added and marked as free.", name);
 
     Ok(())

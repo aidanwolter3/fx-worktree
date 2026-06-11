@@ -175,7 +175,6 @@ pub fn shorten_path(path: &Path, cwd: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,7 +202,7 @@ mod tests {
     #[test]
     fn test_shorten_path() {
         let cwd = Path::new("/home/user/fuchsia/out/default");
-        
+
         // Shares prefix "/home/user/fuchsia"
         let wt = Path::new("/home/user/fuchsia/.jiri_root/worktrees/my-feature");
         assert_eq!(
@@ -213,9 +212,6 @@ mod tests {
 
         // Does not share prefix other than root
         let other = Path::new("/tmp/foo");
-        assert_eq!(
-            shorten_path(other, cwd),
-            PathBuf::from("/tmp/foo")
-        );
+        assert_eq!(shorten_path(other, cwd), PathBuf::from("/tmp/foo"));
     }
 }

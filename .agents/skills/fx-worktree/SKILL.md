@@ -96,4 +96,4 @@ You create and manage the physical directories of worktrees using `jiri` directl
 To achieve fast incremental builds, a Jiri worktree can house multiple dedicated build directories (outdirs), but different worktrees must never share the same build directory. This avoids path invalidation issues in GN/Ninja and ensures subsequent builds in the same worktree can complete in under 3 seconds. Configuration files (`args.gn`) are backed up at lease time and restored upon release.
 
 ### 2. State Isolation
-Lease state is kept completely decentralized. The tool writes `lease.json` (locking metadata) and `last_active` inside the `.jiri_root/worktrees/` directory. There is no global config folder anymore.
+Lease state is kept completely decentralized. The tool writes `lease.json` (locking metadata) and `last_worktree` inside the `.jiri_root/worktrees/` directory. There is no global config folder anymore.

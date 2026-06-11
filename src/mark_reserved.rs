@@ -5,7 +5,7 @@
 //! Management logic for reserving worktrees.
 
 use crate::config::Config;
-use crate::worktree::{set_worktree_state, WorktreeState};
+use crate::worktree::{WorktreeState, set_worktree_state};
 use anyhow::{Result, anyhow};
 
 /// Marks a Jiri worktree as reserved (unavailable for leasing).
@@ -14,11 +14,7 @@ use anyhow::{Result, anyhow};
 /// - The worktree does not exist on disk or in Jiri registry.
 /// - The worktree is already marked reserved.
 /// - The worktree is currently leased (has an active `lease.json` file).
-pub fn mark_reserved_worktree(
-    config: &Config,
-    name: &str,
-    quiet: bool,
-) -> Result<()> {
+pub fn mark_reserved_worktree(config: &Config, name: &str, quiet: bool) -> Result<()> {
     // 1. Resolve name to current path
     let path = crate::locate::locate_path(config, Some(name.to_string()))?;
 

@@ -48,7 +48,9 @@ pub fn lease_worktree(
     if let Some(target_name) = name {
         // Lease specific worktree
         let path = crate::locate::locate_path(config, Some(target_name.to_string()))?;
-        if crate::worktree::get_worktree_state(config, &path) != crate::worktree::WorktreeState::Free {
+        if crate::worktree::get_worktree_state(config, &path)
+            != crate::worktree::WorktreeState::Free
+        {
             return Err(anyhow!("Worktree '{}' is not free", target_name));
         }
 
@@ -69,16 +71,16 @@ pub fn lease_worktree(
                 return Err(anyhow!("Worktree '{}' is already leased", target_name));
             }
             Err(e) => {
-                return Err(e).context(format!(
-                    "Failed to create lease file {:?}",
-                    lease_file_path
-                ));
+                return Err(e)
+                    .context(format!("Failed to create lease file {:?}", lease_file_path));
             }
         }
     } else if any {
         // Lease any free worktree
         for path in worktree_paths {
-            if crate::worktree::get_worktree_state(config, &path) != crate::worktree::WorktreeState::Free {
+            if crate::worktree::get_worktree_state(config, &path)
+                != crate::worktree::WorktreeState::Free
+            {
                 continue;
             }
             let lease_file_path = path.join(".jiri_root").join("lease.json");
@@ -120,9 +122,7 @@ pub fn lease_worktree(
     }
 
     if acquired_lease.is_none() {
-        return Err(anyhow!(
-            "No free worktrees available in the pool."
-        ));
+        return Err(anyhow!("No free worktrees available in the pool."));
     }
 
     let lease_file_path = acquired_lease.unwrap();
@@ -155,8 +155,7 @@ pub fn lease_worktree(
     }
 
     // Write lease info
-    let wt_json =
-        serde_json::to_string(&wt_info).context("Failed to serialize WorktreeInfo")?;
+    let wt_json = serde_json::to_string(&wt_info).context("Failed to serialize WorktreeInfo")?;
     fs::write(&lease_file_path, wt_json).context("Failed to write lease JSON")?;
 
     // Rollback helper on failure
@@ -187,7 +186,7 @@ pub fn lease_worktree(
         }
     }
 
-    config.record_last_active(&wt_info.path)?;
+    config.record_last_worktree(&wt_info.path)?;
 
     Ok(wt_info)
 }

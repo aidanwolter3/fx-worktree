@@ -28,7 +28,7 @@ use std::path::PathBuf;
 pub fn locate_path(config: &Config, name: Option<String>) -> Result<PathBuf> {
     let name = match name {
         Some(ref val) if !val.trim().is_empty() => val.clone(),
-        _ => return config.read_last_active(),
+        _ => return config.read_last_worktree(),
     };
 
     let paths = crate::worktree::read_jiri_worktrees(config)?;
@@ -72,7 +72,10 @@ pub fn locate_path(config: &Config, name: Option<String>) -> Result<PathBuf> {
     }
 
     if matches.is_empty() {
-        return Err(anyhow!("Worktree name '{}' not found in Jiri registry", name));
+        return Err(anyhow!(
+            "Worktree name '{}' not found in Jiri registry",
+            name
+        ));
     }
 
     if matches.len() > 1 {
@@ -104,7 +107,7 @@ mod tests {
             // Jiri worktrees reside under .jiri_root/worktrees/
             let path = registry_dir.join("worktrees").join(name);
             fs::create_dir_all(&path).unwrap();
-            
+
             // canonicalize is required because locate_path uses canonicalized paths from read_jiri_worktrees
             let canonical_path = path.canonicalize().unwrap();
             registry_content.push_str(&format!("{}\n", canonical_path.to_string_lossy()));
@@ -141,7 +144,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let config = Config::new(Some(dir.path().to_path_buf())).unwrap();
         // Setup Jiri worktrees with config_uuid style naming
-        let paths = setup_mock_registry(dir.path(), &["minimal.x64_e2a3f019", "minimal.arm64_98f41bc3"]);
+        let paths = setup_mock_registry(
+            dir.path(),
+            &["minimal.x64_e2a3f019", "minimal.arm64_98f41bc3"],
+        );
 
         // Match suffix/UUID exactly
         let res = locate_path(&config, Some("e2a3f019".to_string())).unwrap();
@@ -175,18 +181,22 @@ mod tests {
 
         let res = locate_path(&config, Some("nonexistent".to_string()));
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("Worktree name 'nonexistent' not found"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Worktree name 'nonexistent' not found")
+        );
     }
 
     #[test]
-    fn test_locate_last_active() {
+    fn test_locate_last_worktree() {
         let dir = tempdir().unwrap();
         let config = Config::new(Some(dir.path().to_path_buf())).unwrap();
         config.init_topology().unwrap();
         let paths = setup_mock_registry(dir.path(), &["wt-one"]);
 
-        // Record last active
-        config.record_last_active(&paths[0]).unwrap();
+        // Record last active worktree
+        config.record_last_worktree(&paths[0]).unwrap();
 
         // Pass None to locate
         let res = locate_path(&config, None).unwrap();

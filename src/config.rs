@@ -36,9 +36,7 @@ impl Config {
             ));
         }
 
-        Ok(Config {
-            fuchsia_dir,
-        })
+        Ok(Config { fuchsia_dir })
     }
 
     pub fn init_topology(&self) -> Result<()> {
@@ -58,22 +56,22 @@ impl Config {
         self.fuchsia_dir.join(".jiri_root").join("worktrees")
     }
 
-    pub fn last_active_file(&self) -> PathBuf {
-        self.worktrees_dir().join("last_active")
+    pub fn last_worktree_file(&self) -> PathBuf {
+        self.worktrees_dir().join("last_worktree")
     }
 
-    pub fn record_last_active(&self, path: &Path) -> Result<()> {
-        std::fs::write(self.last_active_file(), path.to_string_lossy().as_bytes())
-            .with_context(|| format!("Failed to write last_active file"))
+    pub fn record_last_worktree(&self, path: &Path) -> Result<()> {
+        std::fs::write(self.last_worktree_file(), path.to_string_lossy().as_bytes())
+            .with_context(|| format!("Failed to write last_worktree file"))
     }
 
-    pub fn read_last_active(&self) -> Result<PathBuf> {
-        let file = self.last_active_file();
+    pub fn read_last_worktree(&self) -> Result<PathBuf> {
+        let file = self.last_worktree_file();
         if !file.exists() {
-            return Err(anyhow!("No worktree has been active yet."));
+            return Err(anyhow!("No worktree has been used yet."));
         }
         let path_str = std::fs::read_to_string(&file)
-            .with_context(|| format!("Failed to read last_active file"))?;
+            .with_context(|| format!("Failed to read last_worktree file"))?;
         Ok(PathBuf::from(path_str.trim()))
     }
 }
@@ -90,7 +88,7 @@ mod tests {
     fn test_config_new_overridden_dir() {
         let _lock = CONFIG_TEST_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
-        
+
         let config = Config::new(Some(dir.path().to_path_buf())).unwrap();
         assert_eq!(config.fuchsia_dir, dir.path().canonicalize().unwrap());
     }
@@ -100,7 +98,7 @@ mod tests {
         let _lock = CONFIG_TEST_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
-        
+
         let old_fuchsia_dir = std::env::var("FUCHSIA_DIR").ok();
         unsafe {
             std::env::set_var("FUCHSIA_DIR", &canonical_dir);
@@ -121,7 +119,7 @@ mod tests {
     #[test]
     fn test_config_new_missing_err() {
         let _lock = CONFIG_TEST_LOCK.lock().unwrap();
-        
+
         let old_fuchsia_dir = std::env::var("FUCHSIA_DIR").ok();
         unsafe {
             std::env::remove_var("FUCHSIA_DIR");
@@ -129,7 +127,12 @@ mod tests {
 
         let config = Config::new(None);
         assert!(config.is_err());
-        assert!(config.unwrap_err().to_string().contains("Fuchsia directory not specified"));
+        assert!(
+            config
+                .unwrap_err()
+                .to_string()
+                .contains("Fuchsia directory not specified")
+        );
 
         unsafe {
             if let Some(old) = old_fuchsia_dir {
@@ -142,7 +145,7 @@ mod tests {
     fn test_config_new_nonexistent_err() {
         let _lock = CONFIG_TEST_LOCK.lock().unwrap();
         let nonexistent_path = PathBuf::from("/nonexistent/fuchsia/directory");
-        
+
         let config = Config::new(Some(nonexistent_path));
         assert!(config.is_err());
         assert!(config.unwrap_err().to_string().contains("does not exist"));
@@ -160,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_last_active_recording() {
+    fn test_config_last_worktree_recording() {
         let _lock = CONFIG_TEST_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         let config = Config::new(Some(dir.path().to_path_buf())).unwrap();
@@ -169,11 +172,11 @@ mod tests {
         let active_wt = Path::new("/some/active/worktree");
 
         // Read before write should error
-        assert!(config.read_last_active().is_err());
+        assert!(config.read_last_worktree().is_err());
 
         // Write and read
-        config.record_last_active(active_wt).unwrap();
-        let read_path = config.read_last_active().unwrap();
+        config.record_last_worktree(active_wt).unwrap();
+        let read_path = config.read_last_worktree().unwrap();
         assert_eq!(read_path, active_wt);
     }
 }
