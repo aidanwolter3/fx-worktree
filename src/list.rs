@@ -11,12 +11,19 @@ use crate::colors::Colors;
 use crate::config::Config;
 use crate::worktree::WorktreeInfo;
 
+struct OutdirInfo {
+    path: String,
+    config: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 struct WorktreeListEntry {
     name: String,
     path: String,
     status: String,
     outdirs: Vec<String>,
+    #[serde(skip)]
+    outdirs_raw: Vec<OutdirInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_id: Option<String>,
 }
@@ -40,18 +47,25 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
             });
 
             let mut outdirs_info = Vec::new();
+            let mut outdirs_raw = Vec::new();
             for op in outdir_paths {
                 let rel_path = op
                     .strip_prefix(&path)
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| op.to_string_lossy().into_owned());
 
-                let config_info = if let Ok(cfg) = crate::fuchsia::get_config_name_for_outdir(&op) {
+                let config = crate::fuchsia::get_config_name_for_outdir(&op).ok();
+                let config_info = if let Some(ref cfg) = config {
                     format!("{} ({})", rel_path, cfg)
                 } else {
-                    rel_path
+                    rel_path.clone()
                 };
                 outdirs_info.push(config_info);
+
+                outdirs_raw.push(OutdirInfo {
+                    path: rel_path,
+                    config,
+                });
             }
 
             // Check lease
@@ -86,6 +100,7 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
                 path: path.to_string_lossy().into_owned(),
                 status,
                 outdirs: outdirs_info,
+                outdirs_raw,
                 agent_id,
             });
         }
@@ -101,6 +116,14 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
     if wt_entries.is_empty() {
         println!("No worktrees found.");
         return Ok(());
+    }
+
+    // Find global max path length for alignment
+    let mut max_outdir_path_len = 0;
+    for entry in &wt_entries {
+        for outdir in &entry.outdirs_raw {
+            max_outdir_path_len = max_outdir_path_len.max(outdir.path.len());
+        }
     }
 
     // Print pretty layout
@@ -152,16 +175,33 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
         let colored_prefix = colors.blue(prefix);
 
         println!("{}{}{}{}", colored_prefix, colored_name, spaces, status_str);
-        let num_outdirs = entry.outdirs.len();
-        for (i, outdir) in entry.outdirs.iter().enumerate() {
+        let num_outdirs = entry.outdirs_raw.len();
+        for (i, outdir) in entry.outdirs_raw.iter().enumerate() {
             let marker = if i == num_outdirs - 1 {
                 "└── "
             } else {
                 "├── "
             };
-            println!("{}{}", marker, outdir);
+            if let Some(cfg) = &outdir.config {
+                let target_col = max_outdir_path_len + 4;
+                let current_len = outdir.path.len() + 1; // path + ":"
+                let pad_len = target_col.saturating_sub(current_len);
+                let padding = " ".repeat(pad_len);
+                let formatted_cfg = format_config_name(&colors, cfg);
+                println!("{}{}:{}{}", marker, outdir.path, padding, formatted_cfg);
+            } else {
+                println!("{}{}", marker, outdir.path);
+            }
         }
     }
 
     Ok(())
+}
+
+fn format_config_name(colors: &Colors, config: &str) -> String {
+    let parts: Vec<String> = config
+        .split('.')
+        .map(|part| colors.yellow(part))
+        .collect();
+    parts.join(".")
 }
