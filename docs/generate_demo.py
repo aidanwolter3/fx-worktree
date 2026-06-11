@@ -94,11 +94,11 @@ def setup_mock_workspace():
     # Create .jiri_root
     jiri_root = os.path.join(fuchsia_dir, ".jiri_root")
     os.makedirs(jiri_root)
-    os.makedirs(os.path.join(jiri_root, "leases"))
     os.makedirs(os.path.join(jiri_root, "worktrees"))
     
     # Create worktrees
     wt_ids = ["fuchsia.x64-37954053"]
+    registry_lines = []
     for wt_id in wt_ids:
         wt_path = os.path.join(jiri_root, "worktrees", wt_id)
         os.makedirs(wt_path)
@@ -118,6 +118,19 @@ def setup_mock_workspace():
         with open(os.path.join(out_dir, "args.gn"), "w") as f:
             f.write('build_info_product = "fuchsia"\n')
             f.write('build_info_board = "x64"\n')
+
+        # Create worktree state metadata (Free)
+        wt_jiri_root = os.path.join(wt_path, ".jiri_root")
+        os.makedirs(wt_jiri_root)
+        with open(os.path.join(wt_jiri_root, "worktree-state"), "w") as f:
+            f.write("free\n")
+            
+        registry_lines.append(os.path.abspath(wt_path))
+        
+    # Write worktrees_registry
+    with open(os.path.join(jiri_root, "worktrees_registry"), "w") as f:
+        for line in registry_lines:
+            f.write(f"{line}\n")
             
     # Create mock jiri script in parent .jiri_root/bin/jiri
     mock_jiri_dir = os.path.join(jiri_root, "bin")
