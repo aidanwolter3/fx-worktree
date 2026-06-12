@@ -21,9 +21,11 @@ cargo install --path . --force
 In order to achieve fast incremental builds, worktrees are kept around in a pool.
 You create worktrees using the `add` subcommand:
 ```bash
-fx-worktree add <name>
+fx-worktree add <name> [--set <config>]
 ```
-Once created, you can navigate into the worktree and configure its build directories (e.g. `fx set fuchsia.x64`).
+*   `--set`: Auto-configure any number of build directories upon creation. This is a shortcut to running `fx set` inside the worktree (e.g. `fx-worktree add my-worktree --set fuchsia.x64 --set fuchsia.arm64`).
+
+Once created, you can navigate into the worktree and configure additional build directories manually (e.g. `fx set fuchsia.x64`).
 
 By default, newly created worktrees are **Free** (marked as available for automated agents to lease immediately).
 To reserve a worktree for local manual work, you must explicitly mark it as **Reserved**.
@@ -69,20 +71,22 @@ fx-worktree lease --any [--agent-id <agent_name>] [--sync] [--json]
     ```
 
 ### 4. List Worktrees
-List all Jiri-managed worktrees, highlighting their status (`Reserved`, `Free`, or `In Use`) and their build configurations.
+List all Jiri-managed worktrees, highlighting their status (`Reserved`, `Free`, or `In Use`), sync status (relative commit count to parent checkout), and build configurations (with last built timestamp).
 ```bash
 fx-worktree list [--json]
 ```
 
 *   **Default Output:**
     ```none
-    worktree1                                       Reserved
-    ├── out/fuchsia.x64 (fuchsia.x64)
-    └── out/fuchsia.arm64 (fuchsia.arm64)
-    worktree2                                       Free
-    └── out/fuchsia.x64 (fuchsia.x64)
-    worktree3                                       In Use (agent-2f26359d)
-    └── out/fuchsia.x64 (fuchsia.x64)
+    worktree1 (Reserved, Synced)
+    └── out/fuchsia.x64-balanced:     fuchsia.x64 (1h ago)
+
+    worktree2 (Free, 131 behind, 4 new)
+    ├── out/fuchsia.x64-balanced:     fuchsia.x64 (never built)
+    └── out/fuchsia.arm64-balanced:   fuchsia.arm64 (never built)
+
+    worktree3 (In Use (agent-2f26359d), 1 behind)
+    └── out/fuchsia.x64-balanced:     fuchsia.x64 (never built)
     ```
 
 ### 5. Release a Worktree
