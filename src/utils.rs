@@ -200,6 +200,50 @@ pub fn format_relative_time(time: SystemTime) -> String {
     }
 }
 
+/// Helper to determine the sync status of a Git repository at `repo_path` relative
+/// to the parent Git repository at `parent_path`.
+pub fn get_git_sync_status(repo_path: &Path, parent_path: &Path) -> Result<String> {
+    // 1. Get HEAD commit of parent
+    let parent_out = run_command("git", &["rev-parse", "HEAD"], parent_path, &[])?;
+    let parent_head = String::from_utf8(parent_out.stdout)?.trim().to_string();
+
+    // 2. Get HEAD commit of repo
+    let repo_out = run_command("git", &["rev-parse", "HEAD"], repo_path, &[])?;
+    let repo_head = String::from_utf8(repo_out.stdout)?.trim().to_string();
+
+    if parent_head == repo_head {
+        return Ok("Synced".to_string());
+    }
+
+    // 3. Get rev-list counts: <repo_head>...<parent_head>
+    let count_out = run_command(
+        "git",
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{}...{}", repo_head, parent_head),
+        ],
+        repo_path,
+        &[],
+    )?;
+    let count_str = String::from_utf8(count_out.stdout)?;
+    let parts: Vec<&str> = count_str.trim().split_whitespace().collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("Unexpected rev-list output: '{}'", count_str));
+    }
+
+    let ahead: usize = parts[0].parse()?;
+    let behind: usize = parts[1].parse()?;
+
+    match (ahead, behind) {
+        (0, 0) => Ok("Synced".to_string()),
+        (0, b) => Ok(format!("{} behind", b)),
+        (a, 0) => Ok(format!("{} new", a)),
+        (a, b) => Ok(format!("{} behind, {} new", b, a)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

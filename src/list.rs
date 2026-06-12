@@ -22,6 +22,7 @@ struct WorktreeListEntry {
     name: String,
     path: String,
     status: String,
+    sync_status: String,
     outdirs: Vec<String>,
     #[serde(skip)]
     outdirs_raw: Vec<OutdirInfo>,
@@ -100,10 +101,17 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
                 }
             };
 
+            let sync_status = crate::utils::get_git_sync_status(&path, &config.fuchsia_dir)
+                .unwrap_or_else(|e| {
+                    log::warn!("Failed to check sync status for {:?}: {:?}", path, e);
+                    "Unknown".to_string()
+                });
+
             wt_entries.push(WorktreeListEntry {
                 name: dir_name.to_string(),
                 path: path.to_string_lossy().into_owned(),
                 status,
+                sync_status,
                 outdirs: outdirs_info,
                 outdirs_raw,
                 agent_id,
@@ -162,6 +170,11 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
     }
     let align_width = max_total_len + 4;
 
+    let mut max_status_len = 0;
+    for entry in &wt_entries {
+        max_status_len = max_status_len.max(entry.status.len());
+    }
+
     for (idx, entry) in wt_entries.iter().enumerate() {
         let status_str = if entry.status.starts_with("In Use") {
             colors.yellow(&entry.status)
@@ -171,15 +184,34 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
             colors.green("Free")
         };
 
+        let sync_str = if entry.sync_status == "Synced" {
+            colors.bold("Synced")
+        } else if entry.sync_status.contains("behind") && entry.sync_status.contains("new") {
+            colors.magenta(&entry.sync_status)
+        } else if entry.sync_status.contains("behind") {
+            colors.yellow(&entry.sync_status)
+        } else if entry.sync_status.contains("new") {
+            colors.blue(&entry.sync_status)
+        } else {
+            colors.bold(&entry.sync_status)
+        };
+        let sync_display = format!("[{}]", sync_str);
+
         let (prefix, name) = &formatted_paths[idx];
         let total_len = prefix.len() + name.len();
         let spaces_to_add = align_width.saturating_sub(total_len);
         let spaces = " ".repeat(spaces_to_add);
 
+        let status_spaces_to_add = (max_status_len + 4).saturating_sub(entry.status.len());
+        let status_spaces = " ".repeat(status_spaces_to_add);
+
         let colored_name = colors.bold(&colors.blue(name));
         let colored_prefix = colors.blue(prefix);
 
-        println!("{}{}{}{}", colored_prefix, colored_name, spaces, status_str);
+        println!(
+            "{}{}{}{}{}{}",
+            colored_prefix, colored_name, spaces, status_str, status_spaces, sync_display
+        );
         let num_outdirs = entry.outdirs_raw.len();
         for (i, outdir) in entry.outdirs_raw.iter().enumerate() {
             let marker = if i == num_outdirs - 1 {
