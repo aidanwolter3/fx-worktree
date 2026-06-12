@@ -142,7 +142,6 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
     // Print pretty layout
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::new());
     let mut formatted_paths = Vec::new();
-    let mut max_total_len = 0;
     for entry in &wt_entries {
         let path = std::path::Path::new(&entry.path);
         let parent = path.parent().unwrap_or(std::path::Path::new(""));
@@ -165,14 +164,7 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
                 format!("{}/", sp_str)
             }
         };
-        max_total_len = max_total_len.max(prefix.len() + entry.name.len());
         formatted_paths.push((prefix, entry.name.clone()));
-    }
-    let align_width = max_total_len + 4;
-
-    let mut max_status_len = 0;
-    for entry in &wt_entries {
-        max_status_len = max_status_len.max(entry.status.len());
     }
 
     for (idx, entry) in wt_entries.iter().enumerate() {
@@ -195,23 +187,13 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
         } else {
             colors.bold(&entry.sync_status)
         };
-        let sync_display = format!("[{}]", sync_str);
+        let meta_str = format!("({}, {})", status_str, sync_str);
 
         let (prefix, name) = &formatted_paths[idx];
-        let total_len = prefix.len() + name.len();
-        let spaces_to_add = align_width.saturating_sub(total_len);
-        let spaces = " ".repeat(spaces_to_add);
-
-        let status_spaces_to_add = (max_status_len + 4).saturating_sub(entry.status.len());
-        let status_spaces = " ".repeat(status_spaces_to_add);
-
         let colored_name = colors.bold(&colors.blue(name));
         let colored_prefix = colors.blue(prefix);
 
-        println!(
-            "{}{}{}{}{}{}",
-            colored_prefix, colored_name, spaces, status_str, status_spaces, sync_display
-        );
+        println!("{}{} {}", colored_prefix, colored_name, meta_str);
         let num_outdirs = entry.outdirs_raw.len();
         for (i, outdir) in entry.outdirs_raw.iter().enumerate() {
             let marker = if i == num_outdirs - 1 {
@@ -235,6 +217,9 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
             } else {
                 println!("{}{}{}", marker, outdir.path, built_str);
             }
+        }
+        if idx < wt_entries.len() - 1 {
+            println!();
         }
     }
 
