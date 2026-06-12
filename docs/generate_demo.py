@@ -90,6 +90,15 @@ def setup_mock_workspace():
     test_dir = tempfile.mkdtemp(prefix="fx-worktree-demo-")
     fuchsia_dir = os.path.join(test_dir, "fuchsia")
     os.makedirs(fuchsia_dir)
+
+    # Initialize a Git repository in parent checkout
+    subprocess.run(["git", "init", "-q", "--initial-branch=main"], cwd=fuchsia_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=fuchsia_dir, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=fuchsia_dir, check=True)
+    with open(os.path.join(fuchsia_dir, "dummy"), "w") as f:
+        f.write("hello")
+    subprocess.run(["git", "add", "dummy"], cwd=fuchsia_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit", "-q"], cwd=fuchsia_dir, check=True)
     
     # Create .jiri_root
     jiri_root = os.path.join(fuchsia_dir, ".jiri_root")
@@ -106,25 +115,21 @@ def setup_mock_workspace():
     mock_jiri_path = os.path.join(mock_jiri_dir, "jiri")
     
     jiri_script = """#!/bin/bash
+base_dir="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ "$1" = "worktree" ]; then
     if [ "$2" = "add" ]; then
         target_path="$3"
-        mkdir -p "$target_path"
+        
+        # Use git worktree add to share the object database and revision history
+        git -C "$base_dir" worktree add -q -f --detach "$target_path" HEAD
+        
         # Create an outdir so list shows something nice
         mkdir -p "$target_path/out/default"
         echo 'build_info_product = "fuchsia"' > "$target_path/out/default/args.gn"
         echo 'build_info_board = "x64"' >> "$target_path/out/default/args.gn"
         
-        # We also need a dummy git repo so list/lease can run git commands inside it
-        git init -q "$target_path"
-        git -C "$target_path" config user.name "Test"
-        git -C "$target_path" config user.email "test@test.com"
-        touch "$target_path/dummy"
-        git -C "$target_path" add dummy
-        git -C "$target_path" commit -m "init" -q
-        
         # Append to registry
-        echo "$(realpath "$target_path")" >> "$(dirname "$0")/../worktrees_registry"
+        echo "$(realpath "$target_path")" >> "$base_dir/.jiri_root/worktrees_registry"
         exit 0
     elif [ "$2" = "remove" ]; then
         target_path="$3"
@@ -132,12 +137,12 @@ if [ "$1" = "worktree" ]; then
             target_path="$4"
         fi
         resolved_path="$(realpath "$target_path")"
-        if [ -f "$(dirname "$0")/../worktrees_registry" ]; then
-            # Filter out the removed path
-            grep -v "^$resolved_path$" "$(dirname "$0")/../worktrees_registry" > "$(dirname "$0")/../worktrees_registry.tmp" || true
-            mv "$(dirname "$0")/../worktrees_registry.tmp" "$(dirname "$0")/../worktrees_registry"
+        if [ -f "$base_dir/.jiri_root/worktrees_registry" ]; then
+            grep -v "^$resolved_path$" "$base_dir/.jiri_root/worktrees_registry" > "$base_dir/.jiri_root/worktrees_registry.tmp" || true
+            mv "$base_dir/.jiri_root/worktrees_registry.tmp" "$base_dir/.jiri_root/worktrees_registry"
         fi
-        rm -rf "$target_path"
+        # Remove using git worktree remove
+        git -C "$base_dir" worktree remove -f "$target_path" 2>/dev/null || rm -rf "$target_path"
         exit 0
     elif [ "$2" = "clean" ]; then
         exit 0
