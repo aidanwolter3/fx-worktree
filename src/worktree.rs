@@ -120,7 +120,7 @@ pub fn sync_worktree(
 
 /// Adds a new Jiri worktree inside the configured worktrees directory
 /// and marks its state as `Free`.
-pub fn add_worktree(config: &Config, name: &str) -> Result<()> {
+pub fn add_worktree(config: &Config, name: &str, set_configs: Vec<String>) -> Result<()> {
     let target_path = config.worktrees_dir().join(name);
     if target_path.exists() {
         return Err(anyhow!(
@@ -149,6 +149,18 @@ pub fn add_worktree(config: &Config, name: &str) -> Result<()> {
     set_worktree_state(&target_path, WorktreeState::Free)?;
     config.record_last_worktree(&target_path)?;
     println!("Worktree '{}' successfully added and marked as free.", name);
+
+    // Set up configurations if requested
+    for cfg in set_configs {
+        println!("Configuring outdir for '{}' in worktree '{}'...", cfg, name);
+        crate::utils::run_command(
+            "scripts/fx",
+            &["--dir", &format!("out/{}", cfg), "set", &cfg],
+            &target_path,
+            &[],
+        )
+        .with_context(|| format!("Failed to run fx set for config '{}'", cfg))?;
+    }
 
     Ok(())
 }

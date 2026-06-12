@@ -54,10 +54,10 @@ fn main() -> Result<()> {
             config.init_topology()?;
             list::list_worktrees(&config, cli.json)?;
         }
-        Commands::Add { name } => {
+        Commands::Add { name, set } => {
             let config = Config::new(cli.fuchsia_dir)?;
             config.init_topology()?;
-            worktree::add_worktree(&config, &name)?;
+            worktree::add_worktree(&config, &name, set)?;
         }
         Commands::Remove { name, force } => {
             let config = Config::new(cli.fuchsia_dir)?;

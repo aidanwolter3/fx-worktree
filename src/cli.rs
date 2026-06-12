@@ -28,6 +28,9 @@ pub enum Commands {
     Add {
         /// Name of the new worktree
         name: String,
+        /// Auto-configure build directories (e.g. --set fuchsia.x64)
+        #[arg(long, value_name = "CONFIG", action = clap::ArgAction::Append)]
+        set: Vec<String>,
     },
     /// Remove a Jiri worktree
     Remove {
@@ -177,8 +180,27 @@ mod tests {
         let args = vec!["fx-worktree", "add", "new-wt"];
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
-            Some(Commands::Add { name }) => {
+            Some(Commands::Add { name, set }) => {
                 assert_eq!(name, "new-wt".to_string());
+                assert!(set.is_empty());
+            }
+            _ => panic!("Expected Add command"),
+        }
+
+        let args = vec![
+            "fx-worktree",
+            "add",
+            "new-wt",
+            "--set",
+            "fuchsia.x64",
+            "--set",
+            "fuchsia.arm64",
+        ];
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Some(Commands::Add { name, set }) => {
+                assert_eq!(name, "new-wt".to_string());
+                assert_eq!(set, vec!["fuchsia.x64".to_string(), "fuchsia.arm64".to_string()]);
             }
             _ => panic!("Expected Add command"),
         }

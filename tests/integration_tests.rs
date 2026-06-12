@@ -13,7 +13,7 @@ fn add_worktree(config: &Config, config_name: &str, _quiet: bool) -> anyhow::Res
     );
     let wt_path = config.worktrees_dir().join(&name);
 
-    fx_worktree::worktree::add_worktree(config, &name)?;
+    fx_worktree::worktree::add_worktree(config, &name, Vec::new())?;
 
     // Write default build directory config
     let out_dir = wt_path.join("out").join(config_name);
@@ -1484,4 +1484,26 @@ fn test_multiple_configs() {
 
     // Clean up
     remove_worktree(config, &env_id, false, false).unwrap();
+}
+
+#[test]
+fn test_add_worktree_with_sets() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    let env = setup_mock_env();
+    let config = &env.config;
+
+    let wt_name = "test-wt-set";
+    let set_configs = vec!["fuchsia.x64".to_string(), "fuchsia.arm64".to_string()];
+
+    // Add worktree with two configs
+    fx_worktree::worktree::add_worktree(config, wt_name, set_configs).unwrap();
+
+    let wt_path = config.worktrees_dir().join(wt_name);
+
+    // Verify outdirs and args.gn were created by mock fx set
+    assert!(wt_path.join("out/fuchsia.x64/args.gn").exists());
+    assert!(wt_path.join("out/fuchsia.arm64/args.gn").exists());
+
+    // Clean up
+    remove_worktree(config, wt_name, false, false).unwrap();
 }
