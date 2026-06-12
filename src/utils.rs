@@ -175,9 +175,35 @@ pub fn shorten_path(path: &Path, cwd: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Formats a `SystemTime` relative to the current system time as a short human-readable string.
+/// E.g. "3d ago", "2h ago", "10m ago", "5s ago", or "just now".
+pub fn format_relative_time(time: SystemTime) -> String {
+    let now = SystemTime::now();
+    let duration = match now.duration_since(time) {
+        Ok(d) => d,
+        Err(_) => return "just now".to_string(),
+    };
+
+    let secs = duration.as_secs();
+    if secs < 60 {
+        if secs < 5 {
+            "just now".to_string()
+        } else {
+            format!("{}s ago", secs)
+        }
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86400)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_diff_paths() {
@@ -213,5 +239,17 @@ mod tests {
         // Does not share prefix other than root
         let other = Path::new("/tmp/foo");
         assert_eq!(shorten_path(other, cwd), PathBuf::from("/tmp/foo"));
+    }
+
+    #[test]
+    fn test_format_relative_time() {
+        let now = SystemTime::now();
+
+        assert_eq!(format_relative_time(now), "just now");
+        assert_eq!(format_relative_time(now - Duration::from_secs(3)), "just now");
+        assert_eq!(format_relative_time(now - Duration::from_secs(10)), "10s ago");
+        assert_eq!(format_relative_time(now - Duration::from_secs(120)), "2m ago");
+        assert_eq!(format_relative_time(now - Duration::from_secs(7200)), "2h ago");
+        assert_eq!(format_relative_time(now - Duration::from_secs(86400 * 3)), "3d ago");
     }
 }

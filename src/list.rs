@@ -14,6 +14,7 @@ use crate::worktree::WorktreeInfo;
 struct OutdirInfo {
     path: String,
     config: Option<String>,
+    last_built: Option<std::time::SystemTime>,
 }
 
 #[derive(serde::Serialize)]
@@ -62,9 +63,13 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
                 };
                 outdirs_info.push(config_info);
 
+                let ninja_log_path = op.join(".ninja_log");
+                let last_built = crate::utils::get_file_mtime(&ninja_log_path).ok();
+
                 outdirs_raw.push(OutdirInfo {
                     path: rel_path,
                     config,
+                    last_built,
                 });
             }
 
@@ -182,15 +187,21 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
             } else {
                 "├── "
             };
+            let built_str = if let Some(t) = outdir.last_built {
+                format!(" ({})", crate::utils::format_relative_time(t))
+            } else {
+                " (never built)".to_string()
+            };
+
             if let Some(cfg) = &outdir.config {
                 let target_col = max_outdir_path_len + 4;
                 let current_len = outdir.path.len() + 1; // path + ":"
                 let pad_len = target_col.saturating_sub(current_len);
                 let padding = " ".repeat(pad_len);
                 let formatted_cfg = format_config_name(&colors, cfg);
-                println!("{}{}:{}{}", marker, outdir.path, padding, formatted_cfg);
+                println!("{}{}:{}{}{}", marker, outdir.path, padding, formatted_cfg, built_str);
             } else {
-                println!("{}{}", marker, outdir.path);
+                println!("{}{}{}", marker, outdir.path, built_str);
             }
         }
     }
