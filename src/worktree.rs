@@ -129,6 +129,15 @@ pub fn add_worktree(config: &Config, name: &str, set_configs: Vec<String>) -> Re
         ));
     }
 
+    if !crate::fuchsia::is_package_cache_enabled(&config.fuchsia_dir) {
+        println!("Warning: package-cache is not enabled. Enabling it makes 'jiri worktree add' faster by sharing packages with the main tree.");
+        println!("To enable it, run:");
+        println!("  jiri init -package-cache=true");
+        println!("After enabling, run the following to migrate:");
+        println!("  jiri fetch-packages -local-manifest");
+        println!();
+    }
+
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
     let jiri_cmd = if jiri_bin.exists() {
         jiri_bin.to_str().unwrap()
