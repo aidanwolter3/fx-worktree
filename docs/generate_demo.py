@@ -33,6 +33,9 @@ class Terminal:
         self.lines.append(line)
         if len(self.lines) > self.max_lines:
             self.lines.pop(0)
+        # Live preview to host stdout
+        if not line.startswith("\x1b[32m❯\x1b[0m"):
+            print(line)
 
     def update_last_line(self, line):
         if self.lines:
@@ -172,6 +175,7 @@ def generate_frames(bin_path):
 
     def type_command(cmd):
         prompt = "\x1b[32m❯\x1b[0m "
+        print(prompt + cmd)
         term.add_line(prompt)
         append_frame(show_cursor=True, duration=300)
         
