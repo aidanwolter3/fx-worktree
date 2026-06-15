@@ -78,6 +78,7 @@ fn main() -> Result<()> {
             any,
             agent_id,
             sync,
+            base_branch,
             print_path_only,
         } => {
             let config = Config::new(cli.fuchsia_dir)?;
@@ -88,6 +89,7 @@ fn main() -> Result<()> {
                 any,
                 agent_id.as_deref(),
                 sync,
+                base_branch.as_deref(),
                 cli.json || print_path_only,
             )?;
             if cli.json {

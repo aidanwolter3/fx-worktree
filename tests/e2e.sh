@@ -670,6 +670,75 @@ cd "$WT_PATH"
 scripts/fx build
 check_noop "$WT_PATH"
 
+echo "[Progress] Testing lease with --base-branch..."
+cd "$WT_PATH"
+git checkout -b my-base-branch
+echo "base" > base.txt
+git add base.txt
+git commit -m "base commit" -q
+
+# Release it (cleans up agent branch, resets to JIRI_HEAD)
+$FX_WORKTREE_BIN release "$WT_ID"
+
+# Verify we are on JIRI_HEAD and base.txt is gone (because JIRI_HEAD doesn't have it)
+if [ -f base.txt ]; then
+    echo -e "${RED}FAIL: base.txt still exists after release!${NC}"
+    exit 1
+fi
+
+# Lease again with --base-branch
+WT_PATH3=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --agent-id "agent-base" --base-branch "my-base-branch" --print-path-only)
+if [ "$WT_PATH" != "$WT_PATH3" ]; then
+    echo -e "${RED}FAIL: Leased a different worktree path for base test${NC}"
+    exit 1
+fi
+
+cd "$WT_PATH3"
+# Verify base.txt exists now
+if [ ! -f base.txt ]; then
+    echo -e "${RED}FAIL: base.txt does not exist in leased worktree with base-branch!${NC}"
+    exit 1
+fi
+
+# Clean up for next tests
+$FX_WORKTREE_BIN release "$WT_ID"
+git branch -D my-base-branch
+
+# Test auto-creation of base branch
+# Lease with a non-existent base branch
+WT_PATH4=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --agent-id "agent-base2" --base-branch "auto-created-base" --print-path-only)
+if [ "$WT_PATH" != "$WT_PATH4" ]; then
+    echo -e "${RED}FAIL: Leased a different worktree path for auto-create base test${NC}"
+    exit 1
+fi
+
+cd "$WT_PATH4"
+# Verify the base branch was created locally
+if ! git show-ref --verify --quiet refs/heads/auto-created-base; then
+    echo -e "${RED}FAIL: auto-created-base branch was not created!${NC}"
+    exit 1
+fi
+
+# Verify we are on the agent branch
+CURRENT_BRANCH=$(git branch --show-current)
+if [ "$CURRENT_BRANCH" != "mock_config-agent-base2" ]; then
+    echo -e "${RED}FAIL: Not on correct agent branch: $CURRENT_BRANCH${NC}"
+    exit 1
+fi
+
+# Release to clean up
+$FX_WORKTREE_BIN release "$WT_ID"
+# Delete the auto-created branch
+git branch -D auto-created-base
+
+# Restore state for subsequent tests (re-lease as e2e-test-agent)
+WT_PATH_RESTORED=$($FX_WORKTREE_BIN lease "$CONFIG_NAME" --agent-id "$AGENT_ID" --print-path-only)
+if [ "$WT_PATH" != "$WT_PATH_RESTORED" ]; then
+    echo -e "${RED}FAIL: Failed to restore lease on correct path${NC}"
+    exit 1
+fi
+
+
 # ==============================================================================
 # 6. Enable Cache & Migrate Both
 # ==============================================================================

@@ -31,6 +31,7 @@ pub fn lease_worktree(
     any: bool,
     agent_id: Option<&str>,
     sync: bool,
+    base_branch: Option<&str>,
     quiet: bool,
 ) -> Result<WorktreeInfo> {
     let mut acquired_lease = None;
@@ -180,7 +181,7 @@ pub fn lease_worktree(
     }
 
     if let Some(agent) = agent_id {
-        if let Err(e) = setup_branch(&wt_path, &wt_id, agent) {
+        if let Err(e) = setup_branch(&wt_path, &wt_id, agent, base_branch) {
             rollback();
             return Err(e);
         }
@@ -191,7 +192,12 @@ pub fn lease_worktree(
     Ok(wt_info)
 }
 
-fn setup_branch(workspace_path: &Path, worktree_id: &str, agent_id: &str) -> Result<()> {
+fn setup_branch(
+    workspace_path: &Path,
+    worktree_id: &str,
+    agent_id: &str,
+    base_branch: Option<&str>,
+) -> Result<()> {
     if agent_id.is_empty() {
         return Ok(());
     }
@@ -254,8 +260,35 @@ fn setup_branch(workspace_path: &Path, worktree_id: &str, agent_id: &str) -> Res
         }
     } else {
         // Branch does not exist, create and checkout
+        let mut args = vec!["checkout", "-b", &branch_name];
+        if let Some(base) = base_branch {
+            let base_exists = has_local_branch(workspace_path, base);
+            if !base_exists {
+                let default_branch = get_default_branch(workspace_path);
+                log::info!(
+                    "Base branch '{}' not found. Creating it from '{}'.",
+                    base,
+                    default_branch
+                );
+                let create_base_output = Command::new("git")
+                    .args(&["branch", base, &default_branch])
+                    .current_dir(workspace_path)
+                    .output()
+                    .context("Failed to run git branch to create base")?;
+                if !create_base_output.status.success() {
+                    return Err(anyhow!(
+                        "Failed to create base branch '{}' from '{}': {}",
+                        base,
+                        default_branch,
+                        String::from_utf8_lossy(&create_base_output.stderr)
+                    ));
+                }
+            }
+            args.push(base);
+        }
+
         let output = Command::new("git")
-            .args(&["checkout", "-b", &branch_name])
+            .args(&args)
             .current_dir(workspace_path)
             .output()
             .context("Failed to run git checkout -b")?;
@@ -269,4 +302,20 @@ fn setup_branch(workspace_path: &Path, worktree_id: &str, agent_id: &str) -> Res
     }
 
     Ok(())
+}
+
+fn get_default_branch(workspace_path: &Path) -> String {
+    if has_local_branch(workspace_path, "main") {
+        return "main".to_string();
+    }
+    "JIRI_HEAD".to_string()
+}
+
+fn has_local_branch(workspace_path: &Path, branch: &str) -> bool {
+    Command::new("git")
+        .args(&["show-ref", "--verify", &format!("refs/heads/{}", branch)])
+        .current_dir(workspace_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }

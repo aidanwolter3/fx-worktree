@@ -213,7 +213,10 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
                 let pad_len = target_col.saturating_sub(current_len);
                 let padding = " ".repeat(pad_len);
                 let formatted_cfg = format_config_name(&colors, cfg);
-                println!("{}{}:{}{}{}", marker, outdir.path, padding, formatted_cfg, built_str);
+                println!(
+                    "{}{}:{}{}{}",
+                    marker, outdir.path, padding, formatted_cfg, built_str
+                );
             } else {
                 println!("{}{}{}", marker, outdir.path, built_str);
             }
@@ -227,9 +230,6 @@ pub fn list_worktrees(config: &Config, json: bool) -> Result<()> {
 }
 
 fn format_config_name(colors: &Colors, config: &str) -> String {
-    let parts: Vec<String> = config
-        .split('.')
-        .map(|part| colors.yellow(part))
-        .collect();
+    let parts: Vec<String> = config.split('.').map(|part| colors.yellow(part)).collect();
     parts.join(".")
 }

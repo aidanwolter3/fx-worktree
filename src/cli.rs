@@ -54,6 +54,9 @@ pub enum Commands {
         /// Sync the worktree to the latest code
         #[arg(long)]
         sync: bool,
+        /// Base branch to branch off from (defaults to JIRI_HEAD)
+        #[arg(long)]
+        base_branch: Option<String>,
         /// Print only the path of the leased worktree
         #[arg(long, short)]
         print_path_only: bool,
@@ -200,7 +203,10 @@ mod tests {
         match cli.command {
             Some(Commands::Add { name, set }) => {
                 assert_eq!(name, "new-wt".to_string());
-                assert_eq!(set, vec!["fuchsia.x64".to_string(), "fuchsia.arm64".to_string()]);
+                assert_eq!(
+                    set,
+                    vec!["fuchsia.x64".to_string(), "fuchsia.arm64".to_string()]
+                );
             }
             _ => panic!("Expected Add command"),
         }

@@ -130,7 +130,9 @@ pub fn add_worktree(config: &Config, name: &str, set_configs: Vec<String>) -> Re
     }
 
     if !crate::fuchsia::is_package_cache_enabled(&config.fuchsia_dir) {
-        println!("Warning: package-cache is not enabled. Enabling it makes 'jiri worktree add' faster by sharing packages with the main tree.");
+        println!(
+            "Warning: package-cache is not enabled. Enabling it makes 'jiri worktree add' faster by sharing packages with the main tree."
+        );
         println!("To enable it, run:");
         println!("  jiri init -package-cache=true");
         println!("After enabling, run the following to migrate:");
