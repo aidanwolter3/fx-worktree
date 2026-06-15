@@ -82,7 +82,7 @@ pub fn release_worktree(config: &Config, id: &str) -> Result<String> {
 pub fn release_worktree_internal(config: &Config, wt_info: &WorktreeInfo) -> Result<()> {
     log::info!("Releasing worktree {}", wt_info.worktree_id);
 
-    // 1. Clean the workspace by calling 'jiri clean'.
+    // Clean the workspace by calling 'jiri clean'.
     // Note: This relies on 'jiri' being optimized to clean repositories in parallel
     // to meet performance requirements (less than 5 seconds).
     let jiri_bin = config.fuchsia_dir.join(".jiri_root/bin/jiri");
@@ -94,7 +94,31 @@ pub fn release_worktree_internal(config: &Config, wt_info: &WorktreeInfo) -> Res
 
     run_command(jiri_cmd, &["clean"], &wt_info.path, &[]).context("Failed to run jiri clean")?;
 
-    // 2. Restore args.gn in all outdirs
+    // Restore the main git branch state (checkout JIRI_HEAD and delete the agent git branch, if any).
+    if let Some(agent_id) = &wt_info.agent_id {
+        let branch_name = crate::utils::get_agent_branch_name(&wt_info.worktree_id, agent_id);
+        log::info!("Cleaning up branch {} in {:?}", branch_name, wt_info.path);
+
+        if let Err(e) = run_command("git", &["checkout", "JIRI_HEAD"], &wt_info.path, &[]) {
+            log::warn!(
+                "Failed to checkout JIRI_HEAD in {:?}: {:?}",
+                wt_info.path,
+                e
+            );
+        } else {
+            if let Err(e) = run_command("git", &["branch", "-D", &branch_name], &wt_info.path, &[])
+            {
+                log::warn!(
+                    "Failed to delete branch {} in {:?}: {:?}",
+                    branch_name,
+                    wt_info.path,
+                    e
+                );
+            }
+        }
+    }
+
+    // Restore args.gn in all outdirs
     let outdirs = crate::fuchsia::find_outdirs(&wt_info.path)?;
     for outdir in outdirs {
         let args_gn_ref = outdir.join("args.gn.ref");

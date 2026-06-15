@@ -180,7 +180,7 @@ pub fn lease_worktree(
     }
 
     if let Some(agent) = agent_id {
-        if let Err(e) = setup_branch(&wt_path, agent) {
+        if let Err(e) = setup_branch(&wt_path, &wt_id, agent) {
             rollback();
             return Err(e);
         }
@@ -191,18 +191,12 @@ pub fn lease_worktree(
     Ok(wt_info)
 }
 
-fn setup_branch(workspace_path: &Path, agent_id: &str) -> Result<()> {
+fn setup_branch(workspace_path: &Path, worktree_id: &str, agent_id: &str) -> Result<()> {
     if agent_id.is_empty() {
         return Ok(());
     }
 
-    let branch_name = if agent_id.starts_with("feat/") || agent_id.starts_with("bug/") {
-        agent_id.to_string()
-    } else if agent_id.to_uppercase().starts_with("T-") {
-        format!("feat/{}", agent_id.to_lowercase())
-    } else {
-        format!("feat/{}", agent_id)
-    };
+    let branch_name = crate::utils::get_agent_branch_name(worktree_id, agent_id);
 
     log::info!("Setting up branch {} in {:?}", branch_name, workspace_path);
 

@@ -244,6 +244,11 @@ pub fn get_git_sync_status(repo_path: &Path, parent_path: &Path) -> Result<Strin
     }
 }
 
+/// Resolves the standardized git branch name for a given worktree and agent ID.
+pub fn get_agent_branch_name(worktree_id: &str, agent_id: &str) -> String {
+    format!("{}-{}", worktree_id, agent_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,10 +295,25 @@ mod tests {
         let now = SystemTime::now();
 
         assert_eq!(format_relative_time(now), "just now");
-        assert_eq!(format_relative_time(now - Duration::from_secs(3)), "just now");
-        assert_eq!(format_relative_time(now - Duration::from_secs(10)), "10s ago");
-        assert_eq!(format_relative_time(now - Duration::from_secs(120)), "2m ago");
-        assert_eq!(format_relative_time(now - Duration::from_secs(7200)), "2h ago");
-        assert_eq!(format_relative_time(now - Duration::from_secs(86400 * 3)), "3d ago");
+        assert_eq!(
+            format_relative_time(now - Duration::from_secs(3)),
+            "just now"
+        );
+        assert_eq!(
+            format_relative_time(now - Duration::from_secs(10)),
+            "10s ago"
+        );
+        assert_eq!(
+            format_relative_time(now - Duration::from_secs(120)),
+            "2m ago"
+        );
+        assert_eq!(
+            format_relative_time(now - Duration::from_secs(7200)),
+            "2h ago"
+        );
+        assert_eq!(
+            format_relative_time(now - Duration::from_secs(86400 * 3)),
+            "3d ago"
+        );
     }
 }
