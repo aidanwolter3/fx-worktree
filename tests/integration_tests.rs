@@ -43,7 +43,7 @@ fn lease_worktree(
     sync: bool,
     quiet: bool,
 ) -> anyhow::Result<fx_worktree::worktree::WorktreeInfo> {
-    lease_worktree_raw(config, None, true, Some(agent_id), sync, quiet)
+    lease_worktree_raw(config, None, true, Some(agent_id), sync, None, quiet)
 }
 
 // Global lock to serialize tests
@@ -467,6 +467,9 @@ fi
 
 if [ "$1" = "set" ]; then
   config=$2
+  if [ -z "$build_dir" ]; then
+    build_dir="out/$config"
+  fi
   if [ "$config" = "fail_config" ]; then
     echo "mock fx set failure" >&2
     exit 1

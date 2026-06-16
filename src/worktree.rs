@@ -164,13 +164,8 @@ pub fn add_worktree(config: &Config, name: &str, set_configs: Vec<String>) -> Re
     // Set up configurations if requested
     for cfg in set_configs {
         println!("Configuring outdir for '{}' in worktree '{}'...", cfg, name);
-        crate::utils::run_command(
-            "scripts/fx",
-            &["--dir", &format!("out/{}", cfg), "set", &cfg],
-            &target_path,
-            &[],
-        )
-        .with_context(|| format!("Failed to run fx set for config '{}'", cfg))?;
+        crate::utils::run_command("scripts/fx", &["set", &cfg], &target_path, &[])
+            .with_context(|| format!("Failed to run fx set for config '{}'", cfg))?;
     }
 
     Ok(())

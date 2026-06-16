@@ -127,12 +127,14 @@ mod tests {
                 any,
                 agent_id,
                 sync,
+                base_branch,
                 print_path_only,
             }) => {
                 assert_eq!(name, Some("mywt".to_string()));
                 assert!(!any);
                 assert_eq!(agent_id, Some("myagent".to_string()));
                 assert!(sync);
+                assert_eq!(base_branch, None);
                 assert!(!print_path_only);
             }
             _ => panic!("Expected Lease command"),
