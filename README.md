@@ -1,5 +1,7 @@
 # fx-worktree (Fuchsia Worktree Manager)
 
+**NOTE: This project has been moved into fuchsia.git directly as `fx worktree`.**
+
 `fx-worktree` is a stateless, concurrent-safe CLI tool designed to provision
 instantaneous, isolated development worktrees for parallel agents working on
 Fuchsia.
